@@ -24,6 +24,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.awaitEachGesture
+import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.calculateZoom
+import androidx.compose.ui.input.pointer.calculatePan
+import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -107,10 +113,17 @@ fun ZoomImage(file: File) {
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().clipToBounds()
             .pointerInput(file) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val next = (scale * zoom).coerceIn(1f, 5f)
-                    scale = next
-                    off = if (next == 1f) androidx.compose.ui.geometry.Offset.Zero else off + pan
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.count { it.pressed } >= 2) {
+                            val next = (scale * event.calculateZoom()).coerceIn(1f, 5f)
+                            scale = next
+                            off = if (next == 1f) androidx.compose.ui.geometry.Offset.Zero else off + event.calculatePan()
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
             .graphicsLayer(scaleX = scale, scaleY = scale, translationX = off.x, translationY = off.y)
