@@ -14,7 +14,7 @@ import java.io.File
 
 sealed interface Screen {
     data object Home : Screen; data object Settings : Screen; data object Fav : Screen
-    data class Folder(val dir: File) : Screen; data class View(val file: VaultFile, val back: Screen) : Screen
+    data class Folder(val dir: File) : Screen; data class View(val files: List<VaultFile>, val index: Int, val back: Screen) : Screen
 }
 
 class MainActivity : FragmentActivity() {
@@ -29,6 +29,8 @@ class MainActivity : FragmentActivity() {
                 var locked by remember { mutableStateOf(true) }
                 var screen by remember { mutableStateOf<Screen>(Screen.Home) }
                 var version by remember { mutableIntStateOf(0) }
+                var folderScrollIndex by remember { mutableIntStateOf(0) }
+                var folderScrollOffset by remember { mutableIntStateOf(0) }
                 val changed: () -> Unit = { version++; Unit }
                 // Kunci otomatis saat aplikasi ditutup / ke background
                 var stopAt by remember { mutableLongStateOf(0L) }
@@ -43,11 +45,11 @@ class MainActivity : FragmentActivity() {
                     owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
                 }
                 if (locked) LockScreen(pm) { locked = false } else when (val s = screen) {
-                    Screen.Home -> HomeScreen(repo, version, { screen = Screen.Folder(it) }, { screen = Screen.View(it, Screen.Home) }, { screen = Screen.Fav }, { screen = Screen.Settings }, changed)
+                    Screen.Home -> HomeScreen(repo, version, { screen = Screen.Folder(it) }, { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) }, { screen = Screen.Fav }, { screen = Screen.Settings }, changed)
                     Screen.Settings -> SettingsScreen(pm) { screen = Screen.Home }
-                    Screen.Fav -> FolderScreen(repo, null, version, { screen = Screen.Home }, { screen = Screen.View(it, Screen.Fav) }, changed)
-                    is Screen.Folder -> FolderScreen(repo, s.dir, version, { screen = Screen.Home }, { screen = Screen.View(it, s) }, changed)
-                    is Screen.View -> ViewerScreen(repo, s.file, { screen = s.back }, changed)
+                    Screen.Fav -> FolderScreen(repo, null, version, { screen = Screen.Home }, { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Fav) }, changed)
+                    is Screen.Folder -> FolderScreen(repo, s.dir, version, { screen = Screen.Home }, { file, files, index, offset -> folderScrollIndex = index; folderScrollOffset = offset; screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), s) }, changed, folderScrollIndex, folderScrollOffset)
+                    is Screen.View -> ViewerScreen(repo, s.files, s.index, { screen = s.back }, changed)
                 }
             }
         }
