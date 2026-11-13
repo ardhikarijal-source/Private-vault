@@ -22,12 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.calculateZoom
-import androidx.compose.ui.input.pointer.calculatePan
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -103,28 +97,11 @@ private fun setFullscreen(act: Activity?, view: View, on: Boolean) {
 
 @Composable
 fun ZoomImage(file: File) {
-    var scale by remember(file) { mutableStateOf(1f) }
-    var off by remember(file) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     androidx.compose.foundation.Image(
         painter = coil.compose.rememberAsyncImagePainter(file),
         contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().clipToBounds()
-            .pointerInput(file) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    do {
-                        val event = awaitPointerEvent()
-                        if (event.changes.count { it.pressed } >= 2) {
-                            val next = (scale * event.calculateZoom()).coerceIn(1f, 5f)
-                            scale = next
-                            off = if (next == 1f) androidx.compose.ui.geometry.Offset.Zero else off + event.calculatePan()
-                            event.changes.forEach { it.consume() }
-                        }
-                    } while (event.changes.any { it.pressed })
-                }
-            }
-            .graphicsLayer(scaleX = scale, scaleY = scale, translationX = off.x, translationY = off.y)
     )
 }
 
