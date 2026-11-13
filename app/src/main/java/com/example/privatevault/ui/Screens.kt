@@ -7,7 +7,9 @@ import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +31,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import com.example.privatevault.R
 import androidx.compose.ui.res.painterResource
 import com.example.privatevault.data.*
@@ -99,15 +102,18 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
 
 /* ---------- HOME ---------- */
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onChanged: () -> Unit) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onChanged: () -> Unit) {
     val all = remember(version) { repo.allFiles() }
     var q by remember { mutableStateOf("") }
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var target by remember { mutableStateOf<File?>(null) }
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         val f = target ?: repo.folders().firstOrNull() ?: return@rememberLauncherForActivityResult
-        repo.import(f, uris); onChanged()
+        scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) }; onChanged() } finally { importing = false } }
     }
     Scaffold(containerColor = Bg,
         floatingActionButton = { FloatingActionButton(onClick = { if (repo.folders().isEmpty()) newDialog = true else picker.launch(arrayOf("image/*", "video/mp4", "application/zip", "application/vnd.comicbook+zip", "application/x-cbz", "application/octet-stream")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
@@ -117,7 +123,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
             NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
         } }) { pad ->
-        LazyColumn(Modifier.padding(pad).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.padding(pad).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { Image(painterResource(R.drawable.logo_mark_white), "Logo", Modifier.height(28.dp)); Spacer(Modifier.width(10.dp)); Text("Dhika App", fontSize = 20.sp, fontWeight = FontWeight.SemiBold) } }
             item {
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card).padding(vertical = 14.dp)) {
@@ -139,8 +145,9 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 }
             }
             item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+            if (importing) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { Thumb(repo, it, Modifier.weight(1f)) { onFile(it) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { Thumb(repo, it, Modifier.weight(1f)) { onFile(it, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
@@ -161,12 +168,15 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile) -> Unit, onChanged: () -> Unit) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onChanged: () -> Unit) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     val items = remember(version, tab) { (if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { repo.import(it, uris); onChanged() } }
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) }; onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(folder?.name ?: "Favorit") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
             actions = { if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
@@ -182,10 +192,11 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } } } }) { pad ->
         Column(Modifier.padding(pad)) {
             TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
-            if (items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
-            LazyVerticalGrid(GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (importing) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+            if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
+            LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f) }
+                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items) }
                 }
             }
         }
