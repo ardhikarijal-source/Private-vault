@@ -168,12 +168,12 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onChanged: () -> Unit) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     val items = remember(version, tab) { (if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
-    val gridState = rememberLazyGridState()
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) }; onChanged() } finally { importing = false } } } }
@@ -196,7 +196,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items) }
+                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
                 }
             }
         }
