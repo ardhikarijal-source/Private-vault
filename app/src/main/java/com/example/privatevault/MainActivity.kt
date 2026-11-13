@@ -31,6 +31,8 @@ class MainActivity : FragmentActivity() {
                 var version by remember { mutableIntStateOf(0) }
                 var folderScrollIndex by remember { mutableIntStateOf(0) }
                 var folderScrollOffset by remember { mutableIntStateOf(0) }
+                var folderScrollIndex by remember { mutableIntStateOf(0) }
+                var folderScrollOffset by remember { mutableIntStateOf(0) }
                 val changed: () -> Unit = { version++; Unit }
                 // Kunci otomatis saat aplikasi ditutup / ke background
                 var stopAt by remember { mutableLongStateOf(0L) }
