@@ -102,7 +102,7 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
 
 /* ---------- HOME ---------- */
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onChanged: () -> Unit) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onChanged: () -> Unit) {
     val all = remember(version) { repo.allFiles() }
     var q by remember { mutableStateOf("") }
     var newDialog by remember { mutableStateOf(false) }
@@ -125,7 +125,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
         } }) { pad ->
         LazyColumn(state = listState, modifier = Modifier.padding(pad).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { Image(painterResource(R.drawable.logo_mark_white), "Logo", Modifier.height(28.dp)); Spacer(Modifier.width(10.dp)); Text("Dhika App", fontSize = 20.sp, fontWeight = FontWeight.SemiBold) } }
+            item { Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { Image(painterResource(R.drawable.logo_mark_white), "Logo", Modifier.height(28.dp)); Spacer(Modifier.width(10.dp)); Text("Dhika App", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f)); IconButton(onTrash) { Icon(Icons.Default.DeleteOutline, "Sampah") } } }
             item {
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card).padding(vertical = 14.dp)) {
                     listOf("Foto" to MediaType.PHOTO, "Video" to MediaType.VIDEO, "Komik" to MediaType.COMIC).forEach { (n, t) ->
@@ -256,4 +256,23 @@ fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
                 if (ok) pinDlg = false }) { Text("Simpan") } },
             dismissButton = { TextButton({ pinDlg = false }) { Text("Batal") } })
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TrashScreen(repo: VaultRepository, onBack: () -> Unit, onChanged: () -> Unit) {
+    var version by remember { mutableIntStateOf(0) }
+    var confirm by remember { mutableStateOf<VaultRepository.TrashedFile?>(null) }
+    val items = remember(version) { repo.trashedFiles() }
+    Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Baru Dihapus") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
+        if (items.isEmpty()) Box(Modifier.fillMaxSize().padding(pad), Alignment.Center) { Text("Sampah kosong", color = Muted) }
+        else LazyColumn(Modifier.padding(pad)) { items(items, key = { it.file.absolutePath }) { item ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.DeleteOutline, null, tint = Accent); Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.originalName, maxLines = 1); Text("Dihapus: " + java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(item.deletedAt)), color = Muted, fontSize = 12.sp) }
+                TextButton(onClick = { if (repo.restore(item)) { version++; onChanged() } }) { Text("Pulihkan") }
+                IconButton(onClick = { confirm = item }) { Icon(Icons.Default.DeleteForever, "Hapus permanen") }
+            }
+        } }
+    }
+    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { TextButton(onClick = { repo.permanentlyDelete(item); confirm = null; version++ }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirm = null }) { Text("Tidak") } }) }
 }
