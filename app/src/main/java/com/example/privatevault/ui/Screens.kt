@@ -110,10 +110,11 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     var target by remember { mutableStateOf<File?>(null) }
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
+    var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         val f = target ?: repo.folders().firstOrNull() ?: return@rememberLauncherForActivityResult
-        scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) }; onChanged() } finally { importing = false } }
+        scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> android.os.Handler(android.os.Looper.getMainLooper()).post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } }
     }
     Scaffold(containerColor = Bg,
         floatingActionButton = { FloatingActionButton(onClick = { if (repo.folders().isEmpty()) newDialog = true else picker.launch(arrayOf("image/*", "video/mp4", "application/zip", "application/vnd.comicbook+zip", "application/x-cbz", "application/octet-stream")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
@@ -145,13 +146,14 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 }
             }
             item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
-            if (importing) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent) }
+            if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { Thumb(repo, it, Modifier.weight(1f)) { onFile(it, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
+    if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
     if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { repo.createFolder(n); onChanged() } }
 }
 private val Color0d = androidx.compose.ui.graphics.Color(0xFF0D1527)
@@ -176,7 +178,9 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) }; onChanged() } finally { importing = false } } } }
+    var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> android.os.Handler(android.os.Looper.getMainLooper()).post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(folder?.name ?: "Favorit") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
             actions = { if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
@@ -188,11 +192,11 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         bottomBar = { if (folder != null) BottomAppBar(containerColor = Color0d) {
             listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
                 Triple("Salin", Icons.Default.ContentCopy) { sel.forEach(repo::copy); sel.clear(); onChanged() },
-                Triple("Hapus", Icons.Default.Delete) { sel.forEach(repo::delete); sel.clear(); onChanged() }).forEach { (l, ic, act) ->
+                Triple("Hapus", Icons.Default.Delete) { if (sel.isNotEmpty()) confirmDelete = true }).forEach { (l, ic, act) ->
                 TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } } } }) { pad ->
         Column(Modifier.padding(pad)) {
             TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
-            if (importing) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+            if (importing) Column(Modifier.fillMaxWidth().padding(12.dp)) { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
@@ -201,6 +205,8 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
         }
     }
+    if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("Apakah anda ingin benar menghapusnya? File akan masuk ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { sel.toList().forEach(repo::delete); sel.clear(); confirmDelete = false; onChanged() }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
     if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { repo.renameFolder(folder, n); onChanged(); onBack() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},
         text = { Column { repo.folders().filter { it != folder }.forEach { d -> TextButton({ sel.forEach { repo.move(it, d) }; sel.clear(); moveDlg = false; onChanged() }) { Text(d.name) } } } })
