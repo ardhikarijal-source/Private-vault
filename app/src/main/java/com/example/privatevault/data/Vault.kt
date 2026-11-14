@@ -40,6 +40,8 @@ data class VaultFile(val file: File) {
 class VaultRepository(private val ctx: Context) {
     private val root = File(ctx.filesDir, "vault").apply { mkdirs(); File(this, ".nomedia").createNewFile() }
     private val cache = File(ctx.cacheDir, "view").apply { mkdirs() }
+    private val trashDir = File(root, ".trash").apply { mkdirs() }
+    private val trashPrefs = ctx.getSharedPreferences("vault_trash", Context.MODE_PRIVATE)
     private val prefs = ctx.getSharedPreferences("vault_meta", Context.MODE_PRIVATE)
     private val master by lazy { MasterKey.Builder(ctx).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build() }
     private val thumbMem = LruCache<String, Bitmap>(80)
@@ -50,7 +52,7 @@ class VaultRepository(private val ctx: Context) {
     private fun thumbFile(f: File) = File(File(f.parentFile, ".thumbs").apply { mkdirs() }, f.name + ".jpg")
 
     /* ---- folder ---- */
-    fun folders(): List<File> = root.listFiles { f -> f.isDirectory }?.sortedBy { it.name.lowercase() } ?: emptyList()
+    fun folders(): List<File> = root.listFiles { f -> f.isDirectory && f.name != ".trash" }?.sortedBy { it.name.lowercase() } ?: emptyList()
     fun createFolder(name: String) = name.isNotBlank() && File(root, name.trim().replace(Regex("[/\\\\]"), "_")).mkdirs()
     fun renameFolder(f: File, name: String) = f.renameTo(File(root, name.trim()))
     fun deleteFolder(f: File) = f.deleteRecursively()
@@ -71,22 +73,74 @@ class VaultRepository(private val ctx: Context) {
         return dest
     }
 
-    fun import(folder: File, uris: List<Uri>): Int {
+    fun import(folder: File, uris: List<Uri>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): Int {
         var n = 0
-        uris.forEach { uri ->
+        uris.forEachIndexed { index, uri ->
+            onProgress(index, uris.size, "Menyiapkan file ${index + 1} dari ${uris.size}")
             val name = ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
                 if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
             } ?: "file_${System.currentTimeMillis()}"
             if (VaultFile(File(name)).type == null) return@forEach
             val tmp = File(cache, "imp_${System.nanoTime()}.${name.substringAfterLast('.')}")
             ctx.contentResolver.openInputStream(uri)?.use { i -> tmp.outputStream().use { i.copyTo(it) } }
-            store(tmp, folder, name); tmp.delete(); n++
+            try { store(tmp, folder, name); n++ } finally { tmp.delete() }
+            onProgress(index + 1, uris.size, "Memproses $name")
         }
         return n
     }
     fun move(f: VaultFile, to: File) { val p = open(f); store(p, to, f.name); p.delete(); delete(f) }
     fun copy(f: VaultFile) { val p = open(f); store(p, f.file.parentFile!!, f.name); p.delete() }
-    fun delete(f: VaultFile) { f.file.delete(); thumbFile(f.file).delete(); setFav(f, false); thumbMem.remove(f.file.absolutePath) }
+    fun delete(f: VaultFile) {
+        runCatching {
+            val dest = unique(trashDir, "${System.currentTimeMillis()}_${f.name}")
+            val originalFolder = f.file.parentFile?.name.orEmpty()
+            if (f.file.renameTo(dest)) {
+                val thumb = thumbFile(f.file)
+                val trashThumb = File(trashDir, dest.name + ".thumb")
+                if (thumb.exists()) thumb.renameTo(trashThumb)
+                trashPrefs.edit { putString(dest.name, "$originalFolder|${f.name}|${System.currentTimeMillis()}") }
+            }
+        }
+        setFav(f, false); thumbMem.remove(f.file.absolutePath)
+    }
+
+    data class TrashedFile(val file: File, val originalName: String, val deletedAt: Long)
+
+    fun trashedFiles(): List<TrashedFile> {
+        val now = System.currentTimeMillis()
+        val result = mutableListOf<TrashedFile>()
+        trashDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".thumb") }?.forEach { file ->
+            val meta = trashPrefs.getString(file.name, null)
+            if (meta == null) { file.delete(); File(trashDir, file.name + ".thumb").delete() }
+            else {
+                val p = meta.split("|", limit = 3)
+                val deletedAt = p.getOrNull(2)?.toLongOrNull() ?: file.lastModified()
+                if (now - deletedAt >= 30L * 24 * 60 * 60 * 1000) {
+                    file.delete(); File(trashDir, file.name + ".thumb").delete()
+                    trashPrefs.edit { remove(file.name) }
+                } else result += TrashedFile(file, p.getOrNull(1) ?: file.name, deletedAt)
+            }
+        }
+        return result.sortedByDescending { it.deletedAt }
+    }
+
+    fun restore(item: TrashedFile): Boolean {
+        val meta = trashPrefs.getString(item.file.name, null) ?: return false
+        val p = meta.split("|", limit = 3)
+        val folder = File(root, p.firstOrNull().orEmpty())
+        if (!folder.exists()) return false
+        val dest = unique(folder, item.originalName)
+        if (!item.file.renameTo(dest)) return false
+        val oldThumb = File(trashDir, item.file.name + ".thumb")
+        if (oldThumb.exists()) oldThumb.renameTo(thumbFile(dest))
+        trashPrefs.edit { remove(item.file.name) }
+        return true
+    }
+
+    fun permanentlyDelete(item: TrashedFile) {
+        item.file.delete(); File(trashDir, item.file.name + ".thumb").delete()
+        trashPrefs.edit { remove(item.file.name) }
+    }
 
     /** Dekripsi sementara untuk dilihat/diputar. Hapus file hasilnya setelah selesai. */
     fun open(f: VaultFile): File {
