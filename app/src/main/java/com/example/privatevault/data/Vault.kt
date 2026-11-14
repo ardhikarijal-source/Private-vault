@@ -80,7 +80,7 @@ class VaultRepository(private val ctx: Context) {
             val name = ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
                 if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
             } ?: "file_${System.currentTimeMillis()}"
-            if (VaultFile(File(name)).type == null) return@forEach
+            if (VaultFile(File(name)).type == null) return@forEachIndexed
             val tmp = File(cache, "imp_${System.nanoTime()}.${name.substringAfterLast('.')}")
             ctx.contentResolver.openInputStream(uri)?.use { i -> tmp.outputStream().use { i.copyTo(it) } }
             try { store(tmp, folder, name); n++ } finally { tmp.delete() }
