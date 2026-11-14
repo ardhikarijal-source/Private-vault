@@ -46,11 +46,13 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
     if (safeFiles.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = initialIndex.coerceIn(safeFiles.indices)) { safeFiles.size }
     var fs by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val act = LocalContext.current as? Activity
     val view = LocalView.current
     LaunchedEffect(fs) { setFullscreen(act, view, fs) }
     DisposableEffect(Unit) { onDispose { setFullscreen(act, view, false) } }
     BackHandler(fs) { fs = false }
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("Apakah anda ingin benar menghapusnya? File akan masuk ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { repo.delete(current); confirmDelete = false; onChanged(); onBack() }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
     val current = safeFiles[pager.currentPage]
     Scaffold(containerColor = Color.Black,
         topBar = { if (!fs) TopAppBar(title = { Text(current.name, maxLines = 1) }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
@@ -59,7 +61,7 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 val fav = repo.isFav(current)
                 IconButton({ repo.setFav(current, !fav); onChanged() }) { Icon(if (fav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (fav) Color.Red else Color.White) }
-                IconButton({ repo.delete(current); onChanged(); onBack() }) { Icon(Icons.Default.Delete, null) }
+                IconButton({ confirmDelete = true }) { Icon(Icons.Default.Delete, null) }
             } } }) { pad ->
         Box(Modifier.padding(pad).fillMaxSize(), Alignment.Center) {
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { safeFiles[it].file.absolutePath }) { page ->
@@ -117,7 +119,7 @@ fun VideoPlayer(file: File, onFullscreen: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CbzReader(file: File) {
-    val names = remember(file) { ZipFile(file).use { z -> z.entries().asSequence().filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }.map { it.name }.sortedWith(compareBy { it.lowercase() }).toList() } }
+    val names = remember(file) { runCatching { ZipFile(file).use { z -> z.entries().asSequence().filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }.map { it.name }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it }).toList() } }.getOrElse { emptyList() } }
     if (names.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar") }; return }
     val pager = rememberPagerState { names.size }
     Box(Modifier.fillMaxSize()) {
