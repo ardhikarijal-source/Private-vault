@@ -298,7 +298,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = sel.contains(f), onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { if (folder == null && !rootFiles) { if (!sel.contains(f)) sel.add(f) } else actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
+                    Thumb(repo, f, selected = if (sel.isNotEmpty() || folder != null || rootFiles) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { if (folder == null && !rootFiles) { if (!sel.contains(f)) sel.add(f) } else actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
                 }
             }
         }
