@@ -176,15 +176,13 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
         scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } }
     }
     Scaffold(containerColor = Bg,
+        topBar = { if (selectedFiles.isNotEmpty()) TopAppBar(title = { Text("${selectedFiles.size} dipilih") },
+            actions = {
+                IconButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
+                IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
+            }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
-        bottomBar = {
-            if (selectedFiles.isNotEmpty()) {
-                BottomAppBar(containerColor = Color0d) {
-                    Text("${selectedFiles.size} dipilih", Modifier.weight(1f), color = Muted)
-                    TextButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, null); Text("Favorit") }
-                    TextButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, null); Text("Sampah") }
-                }
-            } else NavigationBar(containerColor = Color0d) {
+        bottomBar = { NavigationBar(containerColor = Color0d) {
                 NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
                 NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
@@ -215,7 +213,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
             if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = selectedFiles.contains(file), onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = if (selectedFiles.isNotEmpty()) selectedFiles.contains(file) else null, onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
