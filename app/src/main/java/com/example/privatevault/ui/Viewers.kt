@@ -47,6 +47,7 @@ import androidx.media3.ui.PlayerView
 import com.example.privatevault.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.zip.ZipFile
 
