@@ -136,9 +136,18 @@ fun ZoomImage(file: File) {
                             event.changes.forEach { it.consume() }
                         } else if (active.size == 1 && scale > 1f) {
                             val change = active.first()
-                            offsetX = (offsetX + change.position.x - change.previousPosition.x).coerceIn(-size.width.toFloat(), size.width.toFloat())
-                            offsetY = (offsetY + change.position.y - change.previousPosition.y).coerceIn(-size.height.toFloat(), size.height.toFloat())
-                            change.consume()
+                            val dx = change.position.x - change.previousPosition.x
+                            val dy = change.position.y - change.previousPosition.y
+                            val maxX = size.width.toFloat() * (scale - 1f) / 2f
+                            val maxY = size.height.toFloat() * (scale - 1f) / 2f
+                            val atHorizontalEdge = (dx > 0f && offsetX >= maxX - 1f) || (dx < 0f && offsetX <= -maxX + 1f)
+                            // Saat foto sudah mencapai tepi dan pengguna terus menggeser ke luar,
+                            // jangan konsumsi gesture agar HorizontalPager dapat berpindah foto.
+                            if (!atHorizontalEdge || kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                                offsetX = (offsetX + dx).coerceIn(-maxX, maxX)
+                                offsetY = (offsetY + dy).coerceIn(-maxY, maxY)
+                                change.consume()
+                            }
                         }
                     } while (event.changes.any { it.pressed })
                 }
