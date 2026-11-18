@@ -178,6 +178,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val items = remember(version, tab) { (if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val scope = rememberCoroutineScope()
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
