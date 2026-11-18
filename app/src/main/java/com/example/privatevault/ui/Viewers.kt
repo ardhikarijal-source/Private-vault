@@ -10,6 +10,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -99,11 +102,35 @@ private fun setFullscreen(act: Activity?, view: View, on: Boolean) {
 
 @Composable
 fun ZoomImage(file: File) {
+    var scale by remember(file) { mutableFloatStateOf(1f) }
+    var offsetX by remember(file) { mutableFloatStateOf(0f) }
+    var offsetY by remember(file) { mutableFloatStateOf(0f) }
     androidx.compose.foundation.Image(
         painter = coil.compose.rememberAsyncImagePainter(file),
-        contentDescription = null,
+        contentDescription = "Foto, cubit untuk memperbesar",
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().clipToBounds()
+            .pointerInput(file) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    val next = (scale * zoom).coerceIn(1f, 5f)
+                    val factor = next / scale
+                    scale = next
+                    offsetX = if (scale == 1f) 0f else (offsetX * factor + pan.x).coerceIn(-size.width.toFloat(), size.width.toFloat())
+                    offsetY = if (scale == 1f) 0f else (offsetY * factor + pan.y).coerceIn(-size.height.toFloat(), size.height.toFloat())
+                }
+            }
+            .pointerInput(file) {
+                detectTapGestures(onDoubleTap = {
+                    if (scale > 1f) { scale = 1f; offsetX = 0f; offsetY = 0f }
+                    else scale = 2f
+                })
+            }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offsetX
+                translationY = offsetY
+            }
     )
 }
 
