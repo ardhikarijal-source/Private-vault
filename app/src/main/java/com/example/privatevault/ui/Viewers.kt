@@ -192,6 +192,7 @@ fun CbzReader(file: File) {
     }
     var verticalMode by remember(file) { mutableStateOf(false) }
     val pager = rememberPagerState { names.size }
+    val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
     if (names.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
         return
@@ -217,6 +218,7 @@ fun CbzReader(file: File) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (verticalMode) {
                 androidx.compose.foundation.lazy.LazyColumn(
+                    state = verticalListState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(0.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
@@ -239,9 +241,8 @@ fun CbzReader(file: File) {
                         }
                     }
                 }
-                var currentPage by remember(file) { mutableIntStateOf(0) }
                 Text(
-                    "${currentPage.coerceAtMost(names.lastIndex) + 1} / ${names.size}",
+                    "${(verticalListState.firstVisibleItemIndex + 1).coerceAtMost(names.size)} / ${names.size}",
                     Modifier.align(Alignment.BottomCenter).padding(12.dp)
                         .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
                     color = Color.White
