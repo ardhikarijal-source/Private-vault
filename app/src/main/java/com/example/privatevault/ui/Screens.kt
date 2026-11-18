@@ -241,7 +241,7 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
@@ -279,7 +279,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 NavigationBarItem(false, onHome, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
                 NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
-                NavigationBarItem(false, {}, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
+                NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
             }            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
                 listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
                     Triple("Salin", Icons.Default.ContentCopy) {
