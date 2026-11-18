@@ -11,6 +11,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -55,6 +61,7 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
     val act = LocalContext.current as? Activity
     val view = LocalView.current
     LaunchedEffect(fs) { setFullscreen(act, view, fs) }
+    LaunchedEffect(pager.currentPage) { if (pager.currentPage != initialIndex) fs = true }
     DisposableEffect(Unit) { onDispose { setFullscreen(act, view, false) } }
     BackHandler(fs) { fs = false }
     val current = safeFiles[pager.currentPage]
@@ -76,9 +83,9 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                     DisposableEffect(f.file.absolutePath) { onDispose { plain?.delete() } }
                     plain?.let { p ->
                         when (f.type) {
-                            MediaType.PHOTO -> ZoomImage(p)
+                            MediaType.PHOTO -> ZoomImage(p) { fs = true }
                             MediaType.VIDEO -> VideoPlayer(p) { fs = !fs }
-                            MediaType.COMIC -> CbzReader(p)
+                            MediaType.COMIC -> CbzReader(p, fs) { fs = true }
                             null -> Unit
                         }
                     } ?: CircularProgressIndicator()
@@ -93,17 +100,15 @@ private fun setFullscreen(act: Activity?, view: View, on: Boolean) {
     val w = act?.window ?: return
     val c = WindowCompat.getInsetsController(w, view)
     if (on) {
-        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         c.hide(WindowInsetsCompat.Type.systemBars())
     } else {
-        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         c.show(WindowInsetsCompat.Type.systemBars())
     }
 }
 
 @Composable
-fun ZoomImage(file: File) {
+fun ZoomImage(file: File, onInteraction: () -> Unit = {}) {
     var scale by remember(file) { mutableFloatStateOf(1f) }
     var offsetX by remember(file) { mutableFloatStateOf(0f) }
     var offsetY by remember(file) { mutableFloatStateOf(0f) }
@@ -118,6 +123,7 @@ fun ZoomImage(file: File) {
                     do {
                         val event = awaitPointerEvent()
                         val active = event.changes.filter { it.pressed }
+                        if (event.changes.any { (it.position - it.previousPosition).getDistance() > 1f }) onInteraction()
                         if (active.size >= 2) {
                             val a = active[0]; val b = active[1]
                             val oldDx = a.previousPosition.x - b.previousPosition.x
@@ -179,7 +185,7 @@ fun VideoPlayer(file: File, onFullscreen: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CbzReader(file: File) {
+fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit = {}) {
     val names = remember(file) {
         runCatching {
             ZipFile(file).use { z ->
@@ -194,12 +200,21 @@ fun CbzReader(file: File) {
     var verticalMode by remember(file) { mutableStateOf(false) }
     val pager = rememberPagerState { names.size }
     val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val scrollConnection = remember(onInteraction) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (consumed.y != 0f) onInteraction()
+                return Offset.Zero
+            }
+        }
+    }
     if (names.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
         return
     }
     Column(Modifier.fillMaxSize().background(Color.Black)) {
-        Row(
+        if (!fullscreen) Row(
             Modifier.fillMaxWidth().background(Color(0xFF101010)).padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
@@ -220,7 +235,7 @@ fun CbzReader(file: File) {
             if (verticalMode) {
                 androidx.compose.foundation.lazy.LazyColumn(
                     state = verticalListState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().nestedScroll(scrollConnection),
                     contentPadding = PaddingValues(0.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
