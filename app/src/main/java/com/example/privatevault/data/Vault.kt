@@ -44,7 +44,9 @@ class VaultRepository(private val ctx: Context) {
     private val trashPrefs = ctx.getSharedPreferences("vault_trash", Context.MODE_PRIVATE)
     private val prefs = ctx.getSharedPreferences("vault_meta", Context.MODE_PRIVATE)
     private val master by lazy { MasterKey.Builder(ctx).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build() }
-    private val thumbMem = LruCache<String, Bitmap>(80)
+    private val thumbMem = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
 
     private fun enc(f: File) = EncryptedFile.Builder(ctx, f, master, EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB).build()
     private fun encryptFrom(plain: File, dest: File) { enc(dest).openFileOutput().use { o -> plain.inputStream().use { it.copyTo(o) } } }
@@ -53,9 +55,24 @@ class VaultRepository(private val ctx: Context) {
 
     /* ---- folder ---- */
     fun folders(): List<File> = root.listFiles { f -> f.isDirectory && f.name != ".trash" }?.sortedBy { it.name.lowercase() } ?: emptyList()
-    fun createFolder(name: String) = name.isNotBlank() && File(root, name.trim().replace(Regex("[/\\\\]"), "_")).mkdirs()
-    fun renameFolder(f: File, name: String) = f.renameTo(File(root, name.trim()))
-    fun deleteFolder(f: File) = f.deleteRecursively()
+    private fun safeFolderName(name: String): String? {
+        val cleaned = name.trim().replace(Regex("[/\\\\]"), "_")
+        return cleaned.takeIf { it.isNotBlank() && it != "." && it != ".." && !it.startsWith(".") }
+    }
+    fun createFolder(name: String): Boolean {
+        val safe = safeFolderName(name) ?: return false
+        return File(root, safe).mkdirs()
+    }
+    fun renameFolder(f: File, name: String): Boolean {
+        val safe = safeFolderName(name) ?: return false
+        if (f.parentFile != root || !f.isDirectory || safe == f.name) return false
+        return f.renameTo(File(root, safe))
+    }
+    fun deleteFolder(f: File): Boolean {
+        if (f.parentFile != root || !f.isDirectory || f.name == ".trash") return false
+        files(f).forEach(::delete)
+        return f.deleteRecursively()
+    }
 
     /* ---- file ---- */
     fun files(folder: File): List<VaultFile> =
@@ -82,14 +99,35 @@ class VaultRepository(private val ctx: Context) {
             } ?: "file_${System.currentTimeMillis()}"
             if (VaultFile(File(name)).type == null) return@forEachIndexed
             val tmp = File(cache, "imp_${System.nanoTime()}.${name.substringAfterLast('.')}")
-            ctx.contentResolver.openInputStream(uri)?.use { i -> tmp.outputStream().use { i.copyTo(it) } }
-            try { store(tmp, folder, name); n++ } finally { tmp.delete() }
+            try {
+                val input = ctx.contentResolver.openInputStream(uri) ?: return@forEachIndexed
+                input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
+                store(tmp, folder, name); n++
+            } catch (_: Exception) {
+                // Lewati file yang gagal dibaca; lanjutkan impor berikutnya.
+            } finally { tmp.delete() }
             onProgress(index + 1, uris.size, "Memproses $name")
         }
         return n
     }
-    fun move(f: VaultFile, to: File) { val p = open(f); store(p, to, f.name); p.delete(); delete(f) }
-    fun copy(f: VaultFile) { val p = open(f); store(p, f.file.parentFile!!, f.name); p.delete() }
+    fun move(f: VaultFile, to: File): Boolean {
+        if (!to.isDirectory || to == f.file.parentFile) return false
+        val plain = runCatching { open(f) }.getOrNull() ?: return false
+        return try {
+            val dest = runCatching { store(plain, to, f.name) }.getOrNull() ?: return false
+            if (!f.file.delete()) { dest.delete(); return false }
+            thumbFile(f.file).delete()
+            val favs = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
+            if (favs.remove(f.file.absolutePath)) { favs.add(dest.absolutePath); prefs.edit { putStringSet("fav", favs) } }
+            thumbMem.remove(f.file.absolutePath)
+            true
+        } finally { plain.delete() }
+    }
+    fun copy(f: VaultFile): Boolean {
+        val plain = runCatching { open(f) }.getOrNull() ?: return false
+        return try { runCatching { store(plain, f.file.parentFile!!, f.name) }.isSuccess }
+        finally { plain.delete() }
+    }
     fun delete(f: VaultFile) {
         runCatching {
             val dest = unique(trashDir, "${System.currentTimeMillis()}_${f.name}")
@@ -156,8 +194,15 @@ class VaultRepository(private val ctx: Context) {
     private fun sampled(open: () -> InputStream?): Bitmap? {
         val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         open()?.use { BitmapFactory.decodeStream(it, null, b) }
-        var s = 1; while (b.outWidth / (s * 2) >= 300 && b.outHeight / (s * 2) >= 300) s *= 2
-        return open()?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) }
+        var sample = 1
+        val longest = maxOf(b.outWidth, b.outHeight)
+        while (longest / (sample * 2) >= 512) sample *= 2
+        return open()?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.RGB_565
+            })
+        }
     }
     private fun makeThumb(plain: File): Bitmap? = when (VaultFile(plain).type) {
         MediaType.PHOTO -> sampled { plain.inputStream() }
