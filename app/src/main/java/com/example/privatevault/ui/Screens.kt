@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.*
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,6 +37,7 @@ import com.example.privatevault.R
 import androidx.compose.ui.res.painterResource
 import com.example.privatevault.data.*
 import java.io.File
+import java.util.Date
 
 /* ---------- LOCK ---------- */
 @Composable
@@ -106,9 +108,9 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
 
 /* ---------- THUMBNAIL (didekripsi dari thumbnail terenkripsi) ---------- */
 @Composable
-fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onClick: () -> Unit) {
+fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
     val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
-    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Card2).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Card2).combinedClickable(onClick = onClick, onLongClick = onLongClick), contentAlignment = Alignment.Center) {
         bmp?.let { Image(it.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         if (bmp == null && f.type == MediaType.COMIC) Icon(Icons.Default.MenuBook, null, tint = Accent, modifier = Modifier.size(36.dp))
         if (f.type == MediaType.VIDEO) Icon(Icons.Default.PlayCircle, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(34.dp))
@@ -116,6 +118,35 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
             .background(if (selected) Accent else androidx.compose.ui.graphics.Color(0x66000000)).border(2.dp, androidx.compose.ui.graphics.Color.White, CircleShape).clickable(onClick = onToggle),
             contentAlignment = Alignment.Center) { if (selected) Icon(Icons.Default.Check, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(14.dp)) }
     }
+}
+
+@Composable
+private fun FileInfoDialog(file: VaultFile, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Informasi File") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Nama: ${file.name}")
+            Text("Jenis: ${file.file.extension.uppercase()}")
+            Text("Ukuran: ${android.text.format.Formatter.formatShortFileSize(ctx, file.file.length())}")
+            Text("Folder: ${file.file.parentFile?.name ?: "-"}")
+            Text("Diubah: ${Date(file.file.lastModified())}")
+        } },
+        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
+}
+
+@Composable
+private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val files = remember(folder) { folder.listFiles()?.filter { it.isFile } ?: emptyList() }
+    val total = remember(files) { files.sumOf { it.length() } }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Informasi Folder") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Nama: ${folder.name}")
+            Text("Jumlah file: ${files.size}")
+            Text("Ukuran total: ${android.text.format.Formatter.formatShortFileSize(ctx, total)}")
+            Text("Dibuat/diubah: ${Date(folder.lastModified())}")
+        } },
+        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
 }
 
 /* ---------- HOME ---------- */
@@ -126,6 +157,12 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var target by remember { mutableStateOf<File?>(null) }
+    var actionFile by remember { mutableStateOf<VaultFile?>(null) }
+    var infoFile by remember { mutableStateOf<VaultFile?>(null) }
+    var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
+    var actionFolder by remember { mutableStateOf<File?>(null) }
+    var infoFolder by remember { mutableStateOf<File?>(null) }
+    var deleteFolder by remember { mutableStateOf<File?>(null) }
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
@@ -157,7 +194,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(repo.folders()) { f ->
-                        Column(Modifier.width(78.dp).clip(RoundedCornerShape(14.dp)).background(Card).clickable { onFolder(f) }.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(Modifier.width(78.dp).clip(RoundedCornerShape(14.dp)).background(Card).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1); Text("${repo.files(f).size} item", fontSize = 11.sp, color = Muted)
                         }
                     }
@@ -167,13 +204,19 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
             if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { Thumb(repo, it, Modifier.weight(1f)) { onFile(it, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), onLongClick = { actionFile = file }) { onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
     if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
     if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { repo.createFolder(n); onChanged() } }
+    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
+    infoFile?.let { FileInfoDialog(it) { infoFile = null } }
+    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
+    actionFolder?.let { folder -> AlertDialog(onDismissRequest = { actionFolder = null }, title = { Text(folder.name) }, text = { Text("Pilih tindakan untuk folder ini.") }, confirmButton = { Row { TextButton({ actionFolder = null; infoFolder = folder }) { Text("Informasi") }; TextButton({ actionFolder = null; deleteFolder = folder }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFolder = null }) { Text("Tutup") } }) }
+    infoFolder?.let { FolderInfoDialog(it) { infoFolder = null } }
+    deleteFolder?.let { folder -> AlertDialog(onDismissRequest = { deleteFolder = null }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = null }) { Text("Tidak") } }) }
 }
 private val Color0d = androidx.compose.ui.graphics.Color(0xFF0D1527)
 
@@ -200,13 +243,20 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var importing by remember { mutableStateOf(false) }
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var actionFile by remember { mutableStateOf<VaultFile?>(null) }
+    var infoFile by remember { mutableStateOf<VaultFile?>(null) }
+    var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
+    var actionFolder by remember { mutableStateOf(false) }
+    var infoFolder by remember { mutableStateOf(false) }
+    var deleteFolder by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(folder?.name ?: "Favorit") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
             actions = { if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem({ Text("Ubah Nama") }, { menu = false; rename = true })
-                    DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; repo.deleteFolder(folder); onChanged(); onBack() })
+                    DropdownMenuItem({ Text("Informasi Folder") }, { menu = false; infoFolder = true })
+                    DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
                 } } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { if (folder != null) FloatingActionButton({ picker.launch(arrayOf("image/*", "video/mp4", "application/zip", "application/vnd.comicbook+zip", "application/octet-stream")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
         bottomBar = { if (folder != null) BottomAppBar(containerColor = Color0d) {
@@ -224,7 +274,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
+                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
                 }
             }
         }
@@ -238,6 +288,11 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             moveDlg = false
             scope.launch { withContext(Dispatchers.IO) { selected.forEach { repo.move(it, d) } }; sel.clear(); onChanged() }
         }) { Text(d.name) } } } })
+    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
+    infoFile?.let { FileInfoDialog(it) { infoFile = null } }
+    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
+    if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
+    if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = false }) { Text("Tidak") } })
 }
 
 /* ---------- PENGATURAN ---------- */
