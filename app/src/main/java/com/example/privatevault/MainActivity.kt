@@ -13,7 +13,7 @@ import com.example.privatevault.ui.*
 import java.io.File
 
 sealed interface Screen {
-    data object Home : Screen; data object Settings : Screen; data object Fav : Screen; data object Trash : Screen
+    data object Home : Screen; data object Settings : Screen; data object Fav : Screen; data object Trash : Screen; data object RootFiles : Screen
     data class Folder(val dir: File) : Screen; data class View(val files: List<VaultFile>, val index: Int, val back: Screen) : Screen
 }
 
@@ -46,9 +46,10 @@ class MainActivity : FragmentActivity() {
                 }
                 androidx.activity.compose.BackHandler(enabled = !locked && screen != Screen.Home) { screen = when (val current = screen) { is Screen.View -> current.back; else -> Screen.Home } }
                 if (locked) LockScreen(pm) { locked = false } else when (val s = screen) {
-                    Screen.Home -> HomeScreen(repo, version, { screen = Screen.Folder(it) }, { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) }, { screen = Screen.Fav }, { screen = Screen.Settings }, { screen = Screen.Trash }, changed)
+                    Screen.Home -> HomeScreen(repo, version, { screen = Screen.Folder(it) }, { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) }, { screen = Screen.Fav }, { screen = Screen.Settings }, { screen = Screen.Trash }, { screen = Screen.RootFiles }, changed)
                     Screen.Settings -> SettingsScreen(pm) { screen = Screen.Home }
                     Screen.Trash -> TrashScreen(repo, { screen = Screen.Home }, changed)
+                    Screen.RootFiles -> FolderScreen(repo, null, version, { screen = Screen.Home }, { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.RootFiles) }, changed, rootFiles = true)
                     Screen.Fav -> FolderScreen(repo, null, version, { screen = Screen.Home }, { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Fav) }, changed)
                     is Screen.Folder -> FolderScreen(repo, s.dir, version, { screen = Screen.Home }, { file, files, index, offset -> folderScrollIndex = index; folderScrollOffset = offset; screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), s) }, changed, folderScrollIndex, folderScrollOffset)
                     is Screen.View -> ViewerScreen(repo, s.files, s.index, { screen = s.back }, changed)
