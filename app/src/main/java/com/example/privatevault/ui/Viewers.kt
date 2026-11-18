@@ -199,6 +199,11 @@ fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit
     }
     var verticalMode by remember(file) { mutableStateOf(false) }
     val pager = rememberPagerState { names.size }
+    var previousPage by remember(file) { mutableIntStateOf(0) }
+    LaunchedEffect(pager.currentPage) {
+        if (pager.currentPage != previousPage) onInteraction()
+        previousPage = pager.currentPage
+    }
     val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
     val scrollConnection = remember(onInteraction) {
@@ -257,12 +262,34 @@ fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit
                         }
                     }
                 }
-                Text(
+                if (!fullscreen) Text(
                     "${(verticalListState.firstVisibleItemIndex + 1).coerceAtMost(names.size)} / ${names.size}",
                     Modifier.align(Alignment.BottomCenter).padding(12.dp)
                         .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
                     color = Color.White
                 )
+                Canvas(
+                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
+                        .pointerInput(names.size) {
+                            detectDragGestures(
+                                onDragStart = { p ->
+                                    onInteraction()
+                                    scope.launch { verticalListState.scrollToItem((p.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    onInteraction()
+                                    scope.launch { verticalListState.scrollToItem((change.position.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
+                                }
+                            )
+                        }
+                ) {
+                    val h = size.height
+                    val thumbH = (h / names.size.coerceAtLeast(1)).coerceAtLeast(30.dp.toPx())
+                    val y = (h - thumbH) * (verticalListState.firstVisibleItemIndex.toFloat() / names.size.coerceAtLeast(1))
+                    drawRoundRect(Color(0x55888888), Offset(size.width / 2 - 2.dp.toPx(), 0f), androidx.compose.ui.geometry.Size(4.dp.toPx(), h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
+                    drawRoundRect(Color.White, Offset(size.width / 2 - 3.dp.toPx(), y), androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
+                }
             } else {
                 HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
                     val bmp by produceState<Bitmap?>(null, page, file) {
@@ -272,7 +299,7 @@ fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit
                         Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit)
                     } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
                 }
-                Text(
+                if (!fullscreen) Text(
                     "${pager.currentPage + 1} / ${names.size}",
                     Modifier.align(Alignment.BottomCenter).padding(12.dp)
                         .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
