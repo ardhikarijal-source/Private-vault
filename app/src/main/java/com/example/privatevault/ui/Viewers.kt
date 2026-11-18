@@ -126,8 +126,17 @@ fun CbzReader(file: File) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             val bmp by produceState<Bitmap?>(null, page, file) {
                 value = withContext(Dispatchers.IO) { ZipFile(file).use { z ->
-                    val e = z.getEntry(names[page]); val o = BitmapFactory.Options().apply { inSampleSize = 2 }
-                    z.getInputStream(e).use { BitmapFactory.decodeStream(it, null, o) } } }
+                    val e = z.getEntry(names[page]) ?: return@withContext null
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    z.getInputStream(e).use { BitmapFactory.decodeStream(it, null, bounds) }
+                    var sample = 1
+                    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+                    while (longest / (sample * 2) >= 1800) sample *= 2
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    z.getInputStream(e).use { BitmapFactory.decodeStream(it, null, options) } } }
             }
             bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
         }
