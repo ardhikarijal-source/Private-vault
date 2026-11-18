@@ -153,7 +153,7 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 
 /* ---------- HOME ---------- */
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onChanged: () -> Unit) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit) {
     val all = remember(version) { repo.allFiles() }
     var q by remember { mutableStateOf("") }
     var newDialog by remember { mutableStateOf(false) }
@@ -175,10 +175,10 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
         scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } }
     }
     Scaffold(containerColor = Bg,
-        floatingActionButton = { FloatingActionButton(onClick = { if (repo.folders().isEmpty()) newDialog = true else picker.launch(arrayOf("image/*", "video/mp4", "application/zip", "application/vnd.comicbook+zip", "application/x-cbz", "application/octet-stream")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
+        floatingActionButton = { FloatingActionButton(onClick = { if (repo.folders().isEmpty()) newDialog = true else picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
         bottomBar = { NavigationBar(containerColor = Color0d) {
             NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
-            NavigationBarItem(false, {}, { Icon(Icons.Default.Folder, null) }, label = { Text("Folder") })
+            NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
             NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
             NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
         } }) { pad ->
@@ -234,11 +234,11 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
-    val items = remember(version, tab) { (if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
+    val items = remember(version, tab, rootFiles, folder) { (if (rootFiles) repo.rootFiles().filter { it.type == MediaType.PHOTO } else if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -251,17 +251,17 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var actionFolder by remember { mutableStateOf(false) }
     var infoFolder by remember { mutableStateOf(false) }
     var deleteFolder by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> folder?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; destination?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
-        topBar = { TopAppBar(title = { Text(folder?.name ?: "Favorit") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
+        topBar = { TopAppBar(title = { Text(if (rootFiles) "Gambar di Luar Folder" else folder?.name ?: "Favorit") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
             actions = { if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem({ Text("Ubah Nama") }, { menu = false; rename = true })
                     DropdownMenuItem({ Text("Informasi Folder") }, { menu = false; infoFolder = true })
                     DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
                 } } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
-        floatingActionButton = { if (folder != null) FloatingActionButton({ picker.launch(arrayOf("image/*", "video/mp4", "application/zip", "application/vnd.comicbook+zip", "application/octet-stream")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
-        bottomBar = { if (folder != null) BottomAppBar(containerColor = Color0d) {
+        floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
+        bottomBar = { if (folder != null || rootFiles) BottomAppBar(containerColor = Color0d) {
             listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
                 Triple("Salin", Icons.Default.ContentCopy) {
                     val selected = sel.toList()
@@ -276,7 +276,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = if (folder != null) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
+                    Thumb(repo, f, selected = if (folder != null || rootFiles) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
                 }
             }
         }
