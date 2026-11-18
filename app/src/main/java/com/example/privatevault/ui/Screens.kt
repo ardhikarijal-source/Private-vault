@@ -214,6 +214,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 Triple("Salin", Icons.Default.ContentCopy) {
                     val selected = sel.toList()
                     scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::copy) }; sel.clear(); onChanged() }
+                    Unit
                 },
                 Triple("Hapus", Icons.Default.Delete) { if (sel.isNotEmpty()) confirmDelete = true }).forEach { (l, ic, act) ->
                 TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } } } }) { pad ->
