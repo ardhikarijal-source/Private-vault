@@ -348,16 +348,37 @@ fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
 fun TrashScreen(repo: VaultRepository, onBack: () -> Unit, onChanged: () -> Unit) {
     var version by remember { mutableIntStateOf(0) }
     var confirm by remember { mutableStateOf<VaultRepository.TrashedFile?>(null) }
+    var confirmBulk by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateListOf<String>() }
     val items = remember(version) { repo.trashedFiles() }
-    Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Baru Dihapus") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
+    Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Baru Dihapus") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
+        actions = { if (selected.isNotEmpty()) TextButton(onClick = { confirmBulk = true }) { Text("Hapus (${selected.size})") } },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
         if (items.isEmpty()) Box(Modifier.fillMaxSize().padding(pad), Alignment.Center) { Text("Sampah kosong", color = Muted) }
         else LazyColumn(Modifier.padding(pad)) { items(items, key = { it.file.absolutePath }) { item ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.DeleteOutline, null, tint = Accent); Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(item.originalName, maxLines = 1); Text("Dihapus: " + java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(item.deletedAt)), color = Muted, fontSize = 12.sp) }
-                TextButton(onClick = { if (repo.restore(item)) { version++; onChanged() } }) { Text("Pulihkan") }
+            val bitmap by produceState<android.graphics.Bitmap?>(null, item.file.absolutePath) {
+                value = withContext(Dispatchers.IO) { repo.trashThumb(item) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)).background(Card2), contentAlignment = Alignment.Center) {
+                    bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                        ?: Icon(Icons.Default.Image, null, tint = Muted)
+                }
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(item.originalName, maxLines = 1)
+                    Text("Dihapus: " + java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(item.deletedAt)), color = Muted, fontSize = 12.sp)
+                }
+                Checkbox(checked = selected.contains(item.file.absolutePath), onCheckedChange = { checked ->
+                    if (checked) { if (!selected.contains(item.file.absolutePath)) selected.add(item.file.absolutePath) }
+                    else selected.remove(item.file.absolutePath)
+                })
+                IconButton(onClick = { if (repo.restore(item)) { selected.remove(item.file.absolutePath); version++; onChanged() } }) { Icon(Icons.Default.Restore, "Pulihkan", tint = Accent) }
                 IconButton(onClick = { confirm = item }) { Icon(Icons.Default.DeleteForever, "Hapus permanen") }
             }
         } }
     }
-    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { TextButton(onClick = { repo.permanentlyDelete(item); confirm = null; version++ }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirm = null }) { Text("Tidak") } }) }
+    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { TextButton(onClick = { repo.permanentlyDelete(item); selected.remove(item.file.absolutePath); confirm = null; version++ }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirm = null }) { Text("Tidak") } }) }
+    if (confirmBulk) AlertDialog(onDismissRequest = { confirmBulk = false }, title = { Text("Hapus beberapa file?") }, text = { Text("${selected.size} file akan dihapus permanen dan tidak dapat dipulihkan.") },
+        confirmButton = { TextButton(onClick = { val paths = selected.toSet(); items.filter { it.file.absolutePath in paths }.forEach(repo::permanentlyDelete); selected.clear(); confirmBulk = false; version++ }) { Text("Hapus permanen") } },
+        dismissButton = { TextButton(onClick = { confirmBulk = false }) { Text("Batal") } })
 }
