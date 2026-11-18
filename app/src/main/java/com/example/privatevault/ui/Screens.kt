@@ -152,6 +152,7 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 }
 
 /* ---------- HOME ---------- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit) {
     val all = remember(version) { repo.allFiles() }
