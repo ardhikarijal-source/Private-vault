@@ -54,6 +54,8 @@ class VaultRepository(private val ctx: Context) {
     private fun thumbFile(f: File) = File(File(f.parentFile, ".thumbs").apply { mkdirs() }, f.name + ".jpg")
 
     /* ---- folder ---- */
+    fun rootFolder(): File = root
+    fun rootFiles(): List<VaultFile> = root.listFiles { f -> f.isFile }?.map(::VaultFile)?.filter { it.type != null }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
     fun folders(): List<File> = root.listFiles { f -> f.isDirectory && f.name != ".trash" }?.sortedBy { it.name.lowercase() } ?: emptyList()
     private fun safeFolderName(name: String): String? {
         val cleaned = name.trim().replace(Regex("[/\\\\]"), "_")
@@ -77,7 +79,7 @@ class VaultRepository(private val ctx: Context) {
     /* ---- file ---- */
     fun files(folder: File): List<VaultFile> =
         folder.listFiles { f -> f.isFile }?.map(::VaultFile)?.filter { it.type != null }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
-    fun allFiles(): List<VaultFile> = folders().flatMap { files(it) }.sortedByDescending { it.file.lastModified() }
+    fun allFiles(): List<VaultFile> = (rootFiles() + folders().flatMap { files(it) }).sortedByDescending { it.file.lastModified() }
 
     /** Enkripsi file plain ke folder tujuan + buat thumbnail terenkripsi. */
     private fun store(plain: File, folder: File, name: String): File {
@@ -94,9 +96,16 @@ class VaultRepository(private val ctx: Context) {
         var n = 0
         uris.forEachIndexed { index, uri ->
             onProgress(index, uris.size, "Menyiapkan file ${index + 1} dari ${uris.size}")
-            val name = ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
-            } ?: "file_${System.currentTimeMillis()}"
+            val name = runCatching {
+                ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val column = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (column >= 0) c.getString(column) else null
+                    } else null
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.contains('.') }
+                ?: "file_${System.currentTimeMillis()}"
             if (VaultFile(File(name)).type == null) return@forEachIndexed
             val tmp = File(cache, "imp_${System.nanoTime()}.${name.substringAfterLast('.')}")
             try {
@@ -146,6 +155,13 @@ class VaultRepository(private val ctx: Context) {
     }
 
     data class TrashedFile(val file: File, val originalName: String, val deletedAt: Long)
+
+    fun trashThumb(item: TrashedFile): Bitmap? = runCatching {
+        val thumbnail = File(trashDir, item.file.name + ".thumb")
+        if (!thumbnail.isFile) return null
+        val bytes = enc(thumbnail).openFileInput().use { it.readBytes() }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }.getOrNull()
 
     fun trashedFiles(): List<TrashedFile> {
         val now = System.currentTimeMillis()
