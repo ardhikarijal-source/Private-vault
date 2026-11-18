@@ -256,8 +256,22 @@ class PinManager(ctx: Context) {
         set(new); return true
     }
     fun verify(pin: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (now < prefs.getLong("pin_lock_until", 0L)) return false
         val salt = Base64.decode(prefs.getString("salt", "") ?: return false, 0)
-        return MessageDigest.isEqual(hash(pin, salt).toByteArray(), (prefs.getString("hash", "") ?: "").toByteArray())
+        val valid = MessageDigest.isEqual(hash(pin, salt).toByteArray(), (prefs.getString("hash", "") ?: "").toByteArray())
+        if (valid) {
+            prefs.edit { remove("pin_failures"); remove("pin_lock_until") }
+        } else {
+            val failures = prefs.getInt("pin_failures", 0) + 1
+            prefs.edit {
+                if (failures >= 5) {
+                    putLong("pin_lock_until", now + 30_000L)
+                    putInt("pin_failures", 0)
+                } else putInt("pin_failures", failures)
+            }
+        }
+        return valid
     }
     private fun hash(pin: String, salt: ByteArray) = Base64.encodeToString(
         SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(PBEKeySpec(pin.toCharArray(), salt, 120_000, 256)).encoded, 0)
