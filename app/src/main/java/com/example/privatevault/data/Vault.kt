@@ -165,8 +165,11 @@ class VaultRepository(private val ctx: Context) {
     fun restore(item: TrashedFile): Boolean {
         val meta = trashPrefs.getString(item.file.name, null) ?: return false
         val p = meta.split("|", limit = 3)
-        val folder = File(root, p.firstOrNull().orEmpty())
-        if (!folder.exists()) return false
+        val folderName = p.firstOrNull().orEmpty()
+        if (folderName.isBlank() || folderName == "." || folderName == ".." || folderName.contains("/") || folderName.contains("\\")) return false
+        val folder = File(root, folderName)
+        if (!folder.exists() && !folder.mkdirs()) return false
+        if (folder.parentFile != root || !folder.isDirectory) return false
         val dest = unique(folder, item.originalName)
         if (!item.file.renameTo(dest)) return false
         val oldThumb = File(trashDir, item.file.name + ".thumb")
