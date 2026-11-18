@@ -281,7 +281,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-            }            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
+            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
                 listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
                     Triple("Salin", Icons.Default.ContentCopy) {
                         val selected = sel.toList()
