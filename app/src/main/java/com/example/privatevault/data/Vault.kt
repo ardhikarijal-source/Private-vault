@@ -56,7 +56,7 @@ class VaultRepository(private val ctx: Context) {
     /* ---- folder ---- */
     fun rootFolder(): File = root
     fun rootFiles(): List<VaultFile> = root.listFiles { f -> f.isFile }?.map(::VaultFile)?.filter { it.type != null }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
-    fun folders(): List<File> = root.listFiles { f -> f.isDirectory && f.name != ".trash" }?.sortedBy { it.name.lowercase() } ?: emptyList()
+    fun folders(): List<File> = root.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }?.sortedBy { it.name.lowercase() } ?: emptyList()
     private fun safeFolderName(name: String): String? {
         val cleaned = name.trim().replace(Regex("[/\\\\]"), "_")
         return cleaned.replace('|', '_').takeIf { it.isNotBlank() && it != "." && it != ".." && !it.startsWith(".") }
@@ -137,31 +137,53 @@ class VaultRepository(private val ctx: Context) {
         return try { runCatching { store(plain, f.file.parentFile!!, f.name) }.isSuccess }
         finally { plain.delete() }
     }
+    private fun reencryptFile(source: File, destination: File): Boolean {
+        val temp = File(cache, "move_${System.nanoTime()}.tmp")
+        return try {
+            decryptTo(source, temp)
+            encryptFrom(temp, destination)
+            true
+        } catch (_: Exception) {
+            destination.delete()
+            false
+        } finally { temp.delete() }
+    }
+
     fun delete(f: VaultFile) {
-        runCatching {
-            val dest = unique(trashDir, "${System.currentTimeMillis()}_${f.name}")
-            val originalFolder = if (f.file.parentFile == root) "__ROOT__" else f.file.parentFile?.name.orEmpty()
-            if (f.file.renameTo(dest)) {
-                val thumb = thumbFile(f.file)
-                val trashThumb = File(trashDir, dest.name + ".thumb")
-                if (thumb.exists()) thumb.renameTo(trashThumb)
-                val deletedAt = System.currentTimeMillis()
-                val encodedFolder = Base64.encodeToString(originalFolder.toByteArray(), Base64.NO_WRAP)
-                val encodedName = Base64.encodeToString(f.name.toByteArray(), Base64.NO_WRAP)
-                trashPrefs.edit { putString(dest.name, "v2|$encodedFolder|$encodedName|$deletedAt") }
-            }
+        val dest = unique(trashDir, "${System.currentTimeMillis()}_${f.name}")
+        val originalFolder = if (f.file.parentFile == root) "__ROOT__" else f.file.parentFile?.name.orEmpty()
+        if (runCatching { f.file.renameTo(dest) }.getOrDefault(false)) {
+            val thumb = thumbFile(f.file)
+            val trashThumb = File(trashDir, dest.name + ".thumb")
+            if (thumb.isFile && reencryptFile(thumb, trashThumb)) thumb.delete()
+            val deletedAt = System.currentTimeMillis()
+            val encodedFolder = Base64.encodeToString(originalFolder.toByteArray(), Base64.NO_WRAP)
+            val encodedName = Base64.encodeToString(f.name.toByteArray(), Base64.NO_WRAP)
+            trashPrefs.edit { putString(dest.name, "v2|${encodedFolder}|${encodedName}|${deletedAt}") }
         }
-        setFav(f, false); thumbMem.remove(f.file.absolutePath)
+        setFav(f, false)
+        thumbMem.remove(f.file.absolutePath)
     }
 
     data class TrashedFile(val file: File, val originalName: String, val deletedAt: Long)
 
-    fun trashThumb(item: TrashedFile): Bitmap? = runCatching {
+    fun trashThumb(item: TrashedFile): Bitmap? {
         val thumbnail = File(trashDir, item.file.name + ".thumb")
-        if (!thumbnail.isFile) return null
-        val bytes = enc(thumbnail).openFileInput().use { it.readBytes() }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    }.getOrNull()
+        val fromSavedThumb = runCatching {
+            if (!thumbnail.isFile) null else {
+                val bytes = enc(thumbnail).openFileInput().use { it.readBytes() }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        }.getOrNull()
+        if (fromSavedThumb != null) return fromSavedThumb
+        // Fallback untuk item lama atau thumbnail yang gagal dipindahkan: buat ulang dari file terenkripsi.
+        val temp = File(cache, "trash_thumb_${System.nanoTime()}_${item.originalName}")
+        return try {
+            decryptTo(item.file, temp)
+            makeThumb(temp)
+        } catch (_: Exception) { null }
+        finally { temp.delete() }
+    }
 
     fun trashedFiles(): List<TrashedFile> {
         val now = System.currentTimeMillis()
@@ -199,7 +221,7 @@ class VaultRepository(private val ctx: Context) {
         val dest = unique(folder, originalName)
         if (!item.file.renameTo(dest)) return false
         val oldThumb = File(trashDir, item.file.name + ".thumb")
-        if (oldThumb.exists()) oldThumb.renameTo(thumbFile(dest))
+        if (oldThumb.isFile && reencryptFile(oldThumb, thumbFile(dest))) oldThumb.delete()
         trashPrefs.edit { remove(item.file.name) }
         return true
     }
