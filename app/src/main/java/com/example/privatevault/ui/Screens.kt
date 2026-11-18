@@ -261,26 +261,26 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; destination?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(if (rootFiles) "Gambar di Luar Folder" else folder?.name ?: "Favorit") }, navigationIcon = { if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
-            actions = { if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text("Ubah Nama") }, { menu = false; rename = true })
-                    DropdownMenuItem({ Text("Informasi Folder") }, { menu = false; infoFolder = true })
-                    DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
-                } } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
+            actions = {
+                if ((folder == null || rootFiles) && sel.isNotEmpty()) {
+                    IconButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
+                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
+                }
+                if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem({ Text("Ubah Nama") }, { menu = false; rename = true })
+                        DropdownMenuItem({ Text("Informasi Folder") }, { menu = false; infoFolder = true })
+                        DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
+                    } }
+            }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
         bottomBar = {
-            if (folder == null || rootFiles) {
-                if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
-                    Text("\${sel.size} dipilih", Modifier.weight(1f), color = Muted)
-                    TextButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, null); Text("Favorit") }
-                    TextButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, null); Text("Sampah") }
-                } else NavigationBar(containerColor = Color0d) {
-                    NavigationBarItem(false, onHome, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
-                    NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
-                    NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
-                    NavigationBarItem(false, {}, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-                }
-            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
+            if (folder == null || rootFiles) NavigationBar(containerColor = Color0d) {
+                NavigationBarItem(false, onHome, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
+                NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
+                NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
+                NavigationBarItem(false, {}, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
+            }            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
                 listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
                     Triple("Salin", Icons.Default.ContentCopy) {
                         val selected = sel.toList()
@@ -290,7 +290,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                     Triple("Hapus", Icons.Default.Delete) { if (sel.isNotEmpty()) confirmDelete = true }).forEach { (l, ic, act) ->
                     TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } }
             }
-        } { pad ->
+        }) { pad ->
         Column(Modifier.padding(pad)) {
             if (!rootFiles) TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
             if (importing) Column(Modifier.fillMaxWidth().padding(12.dp)) { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
