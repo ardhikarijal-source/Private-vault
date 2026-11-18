@@ -57,7 +57,7 @@ class VaultRepository(private val ctx: Context) {
     fun folders(): List<File> = root.listFiles { f -> f.isDirectory && f.name != ".trash" }?.sortedBy { it.name.lowercase() } ?: emptyList()
     private fun safeFolderName(name: String): String? {
         val cleaned = name.trim().replace(Regex("[/\\\\]"), "_")
-        return cleaned.takeIf { it.isNotBlank() && it != "." && it != ".." && !it.startsWith(".") }
+        return cleaned.replace('|', '_').takeIf { it.isNotBlank() && it != "." && it != ".." && !it.startsWith(".") }
     }
     fun createFolder(name: String): Boolean {
         val safe = safeFolderName(name) ?: return false
@@ -136,7 +136,10 @@ class VaultRepository(private val ctx: Context) {
                 val thumb = thumbFile(f.file)
                 val trashThumb = File(trashDir, dest.name + ".thumb")
                 if (thumb.exists()) thumb.renameTo(trashThumb)
-                trashPrefs.edit { putString(dest.name, "$originalFolder|${f.name}|${System.currentTimeMillis()}") }
+                val deletedAt = System.currentTimeMillis()
+                val encodedFolder = Base64.encodeToString(originalFolder.toByteArray(), Base64.NO_WRAP)
+                val encodedName = Base64.encodeToString(f.name.toByteArray(), Base64.NO_WRAP)
+                trashPrefs.edit { putString(dest.name, "v2|$encodedFolder|$encodedName|$deletedAt") }
             }
         }
         setFav(f, false); thumbMem.remove(f.file.absolutePath)
@@ -149,14 +152,18 @@ class VaultRepository(private val ctx: Context) {
         val result = mutableListOf<TrashedFile>()
         trashDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".thumb") }?.forEach { file ->
             val meta = trashPrefs.getString(file.name, null)
-            if (meta == null) { file.delete(); File(trashDir, file.name + ".thumb").delete() }
-            else {
-                val p = meta.split("|", limit = 3)
-                val deletedAt = p.getOrNull(2)?.toLongOrNull() ?: file.lastModified()
+            if (meta == null) {
+                // Metadata hilang? Pertahankan file agar tidak terhapus otomatis.
+                result += TrashedFile(file, file.name, file.lastModified())
+            } else {
+                val p = meta.split("|", limit = 4)
+                val isV2 = p.firstOrNull() == "v2"
+                val originalName = if (isV2) runCatching { String(Base64.decode(p[2], Base64.NO_WRAP)) }.getOrDefault(file.name) else p.getOrNull(1) ?: file.name
+                val deletedAt = (if (isV2) p.getOrNull(3) else p.getOrNull(2))?.toLongOrNull() ?: file.lastModified()
                 if (now - deletedAt >= 30L * 24 * 60 * 60 * 1000) {
                     file.delete(); File(trashDir, file.name + ".thumb").delete()
                     trashPrefs.edit { remove(file.name) }
-                } else result += TrashedFile(file, p.getOrNull(1) ?: file.name, deletedAt)
+                } else result += TrashedFile(file, originalName, deletedAt)
             }
         }
         return result.sortedByDescending { it.deletedAt }
@@ -164,13 +171,15 @@ class VaultRepository(private val ctx: Context) {
 
     fun restore(item: TrashedFile): Boolean {
         val meta = trashPrefs.getString(item.file.name, null) ?: return false
-        val p = meta.split("|", limit = 3)
-        val folderName = p.firstOrNull().orEmpty()
+        val p = meta.split("|", limit = 4)
+        val isV2 = p.firstOrNull() == "v2"
+        val folderName = if (isV2) runCatching { String(Base64.decode(p[1], Base64.NO_WRAP)) }.getOrDefault("") else p.firstOrNull().orEmpty()
+        val originalName = if (isV2) runCatching { String(Base64.decode(p[2], Base64.NO_WRAP)) }.getOrDefault(item.originalName) else item.originalName
         if (folderName.isBlank() || folderName == "." || folderName == ".." || folderName.contains("/") || folderName.contains("\\")) return false
         val folder = File(root, folderName)
         if (!folder.exists() && !folder.mkdirs()) return false
         if (folder.parentFile != root || !folder.isDirectory) return false
-        val dest = unique(folder, item.originalName)
+        val dest = unique(folder, originalName)
         if (!item.file.renameTo(dest)) return false
         val oldThumb = File(trashDir, item.file.name + ".thumb")
         if (oldThumb.exists()) oldThumb.renameTo(thumbFile(dest))
