@@ -171,11 +171,11 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
-        val f = target ?: repo.folders().firstOrNull() ?: return@rememberLauncherForActivityResult
+        val f = target ?: repo.folders().firstOrNull() ?: repo.rootFolder()
         scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } }
     }
     Scaffold(containerColor = Bg,
-        floatingActionButton = { FloatingActionButton(onClick = { if (repo.folders().isEmpty()) newDialog = true else picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
+        floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
         bottomBar = { NavigationBar(containerColor = Color0d) {
             NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
             NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
@@ -271,7 +271,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 Triple("Hapus", Icons.Default.Delete) { if (sel.isNotEmpty()) confirmDelete = true }).forEach { (l, ic, act) ->
                 TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } } } }) { pad ->
         Column(Modifier.padding(pad)) {
-            TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
+            if (!rootFiles) TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
             if (importing) Column(Modifier.fillMaxWidth().padding(12.dp)) { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -282,7 +282,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         }
     }
     if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
-    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("Apakah anda ingin benar menghapusnya? File akan masuk ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { sel.toList().forEach(repo::delete); sel.clear(); confirmDelete = false; onChanged() }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
     if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { repo.renameFolder(folder, n); onChanged(); onBack() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},
         text = { Column { repo.folders().filter { it != folder }.forEach { d -> TextButton({
