@@ -9,7 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -110,13 +111,36 @@ fun ZoomImage(file: File) {
         contentDescription = "Foto, cubit untuk memperbesar",
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().clipToBounds()
-            .pointerInput(file) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val next = (scale * zoom).coerceIn(1f, 5f)
-                    val factor = next / scale
-                    scale = next
-                    offsetX = if (scale == 1f) 0f else (offsetX * factor + pan.x).coerceIn(-size.width.toFloat(), size.width.toFloat())
-                    offsetY = if (scale == 1f) 0f else (offsetY * factor + pan.y).coerceIn(-size.height.toFloat(), size.height.toFloat())
+             .pointerInput(file) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val active = event.changes.filter { it.pressed }
+                        if (active.size >= 2) {
+                            val a = active[0]; val b = active[1]
+                            val oldDx = a.previousPosition.x - b.previousPosition.x
+                            val oldDy = a.previousPosition.y - b.previousPosition.y
+                            val newDx = a.position.x - b.position.x
+                            val newDy = a.position.y - b.position.y
+                            val oldDistance = kotlin.math.sqrt(oldDx * oldDx + oldDy * oldDy)
+                            val newDistance = kotlin.math.sqrt(newDx * newDx + newDy * newDy)
+                            val zoom = if (oldDistance > 0f) newDistance / oldDistance else 1f
+                            val next = (scale * zoom).coerceIn(1f, 5f)
+                            val factor = next / scale
+                            val panX = ((a.position.x + b.position.x) - (a.previousPosition.x + b.previousPosition.x)) / 2f
+                            val panY = ((a.position.y + b.position.y) - (a.previousPosition.y + b.previousPosition.y)) / 2f
+                            scale = next
+                            offsetX = if (scale == 1f) 0f else (offsetX * factor + panX).coerceIn(-size.width.toFloat(), size.width.toFloat())
+                            offsetY = if (scale == 1f) 0f else (offsetY * factor + panY).coerceIn(-size.height.toFloat(), size.height.toFloat())
+                            event.changes.forEach { it.consume() }
+                        } else if (active.size == 1 && scale > 1f) {
+                            val change = active.first()
+                            offsetX = (offsetX + change.position.x - change.previousPosition.x).coerceIn(-size.width.toFloat(), size.width.toFloat())
+                            offsetY = (offsetY + change.position.y - change.previousPosition.y).coerceIn(-size.height.toFloat(), size.height.toFloat())
+                            change.consume()
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
             .pointerInput(file) {
