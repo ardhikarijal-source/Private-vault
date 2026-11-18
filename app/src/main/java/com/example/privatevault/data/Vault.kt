@@ -140,7 +140,7 @@ class VaultRepository(private val ctx: Context) {
     fun delete(f: VaultFile) {
         runCatching {
             val dest = unique(trashDir, "${System.currentTimeMillis()}_${f.name}")
-            val originalFolder = f.file.parentFile?.name.orEmpty()
+            val originalFolder = if (f.file.parentFile == root) "__ROOT__" else f.file.parentFile?.name.orEmpty()
             if (f.file.renameTo(dest)) {
                 val thumb = thumbFile(f.file)
                 val trashThumb = File(trashDir, dest.name + ".thumb")
@@ -191,10 +191,11 @@ class VaultRepository(private val ctx: Context) {
         val isV2 = p.firstOrNull() == "v2"
         val folderName = if (isV2) runCatching { String(Base64.decode(p[1], Base64.NO_WRAP)) }.getOrDefault("") else p.firstOrNull().orEmpty()
         val originalName = if (isV2) runCatching { String(Base64.decode(p[2], Base64.NO_WRAP)) }.getOrDefault(item.originalName) else item.originalName
-        if (folderName.isBlank() || folderName == "." || folderName == ".." || folderName.contains("/") || folderName.contains("\\")) return false
-        val folder = File(root, folderName)
+        if (folderName.isBlank() || (folderName != "__ROOT__" && (folderName == "." || folderName == ".." || folderName.contains("/") || folderName.contains("\\")))) return false
+        val folder = if (folderName == "__ROOT__") root else File(root, folderName)
         if (!folder.exists() && !folder.mkdirs()) return false
-        if (folder.parentFile != root || !folder.isDirectory) return false
+        if (folder != root && folder.parentFile != root) return false
+        if (!folder.isDirectory) return false
         val dest = unique(folder, originalName)
         if (!item.file.renameTo(dest)) return false
         val oldThumb = File(trashDir, item.file.name + ".thumb")
