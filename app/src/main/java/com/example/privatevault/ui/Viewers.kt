@@ -179,27 +179,107 @@ fun VideoPlayer(file: File, onFullscreen: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CbzReader(file: File) {
-    val names = remember(file) { runCatching { ZipFile(file).use { z -> z.entries().asSequence().filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }.map { it.name }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it }).toList() } }.getOrElse { emptyList() } }
-    if (names.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar") }; return }
-    val pager = rememberPagerState { names.size }
-    Box(Modifier.fillMaxSize()) {
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            val bmp by produceState<Bitmap?>(null, page, file) {
-                value = withContext(Dispatchers.IO) { ZipFile(file).use { z ->
-                    val e = z.getEntry(names[page]) ?: return@withContext null
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    z.getInputStream(e).use { BitmapFactory.decodeStream(it, null, bounds) }
-                    var sample = 1
-                    val longest = maxOf(bounds.outWidth, bounds.outHeight)
-                    while (longest / (sample * 2) >= 1800) sample *= 2
-                    val options = BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                        inPreferredConfig = Bitmap.Config.RGB_565
-                    }
-                    z.getInputStream(e).use { BitmapFactory.decodeStream(it, null, options) } } }
+    val names = remember(file) {
+        runCatching {
+            ZipFile(file).use { z ->
+                z.entries().asSequence()
+                    .filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }
+                    .map { it.name }
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+                    .toList()
             }
-            bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-        }
-        Text("${pager.currentPage + 1} / ${names.size}", Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp), color = Color.White)
+        }.getOrElse { emptyList() }
     }
+    var verticalMode by remember(file) { mutableStateOf(false) }
+    val pager = rememberPagerState { names.size }
+    if (names.isEmpty()) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
+        return
+    }
+    Column(Modifier.fillMaxSize().background(Color.Black)) {
+        Row(
+            Modifier.fillMaxWidth().background(Color(0xFF101010)).padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = !verticalMode,
+                onClick = { verticalMode = false },
+                label = { Text("Swipe ke samping") }
+            )
+            Spacer(Modifier.width(10.dp))
+            FilterChip(
+                selected = verticalMode,
+                onClick = { verticalMode = true },
+                label = { Text("Strip panjang") }
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (verticalMode) {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(0.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    items(names.size, key = { names[it] }) { index ->
+                        val bmp by produceState<Bitmap?>(null, index, file) {
+                            value = loadCbzPage(file, names[index])
+                        }
+                        if (bmp != null) {
+                            Image(
+                                bmp!!.asImageBitmap(),
+                                contentDescription = "Halaman ${index + 1}",
+                                modifier = Modifier.fillMaxWidth().wrapContentHeight().background(Color.White),
+                                contentScale = ContentScale.FillWidth
+                            )
+                        } else {
+                            Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
+                }
+                var currentPage by remember(file) { mutableIntStateOf(0) }
+                Text(
+                    "${currentPage.coerceAtMost(names.lastIndex) + 1} / ${names.size}",
+                    Modifier.align(Alignment.BottomCenter).padding(12.dp)
+                        .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = Color.White
+                )
+            } else {
+                HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                    val bmp by produceState<Bitmap?>(null, page, file) {
+                        value = loadCbzPage(file, names[page])
+                    }
+                    bmp?.let {
+                        Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit)
+                    } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+                }
+                Text(
+                    "${pager.currentPage + 1} / ${names.size}",
+                    Modifier.align(Alignment.BottomCenter).padding(12.dp)
+                        .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
+
+private suspend fun loadCbzPage(file: File, entryName: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+        ZipFile(file).use { z ->
+            val entry = z.getEntry(entryName) ?: return@use null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            val longest = maxOf(bounds.outWidth, bounds.outHeight)
+            while (longest / (sample * 2) >= 1800) sample *= 2
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, options) }
+        }
+    }.getOrNull()
 }
