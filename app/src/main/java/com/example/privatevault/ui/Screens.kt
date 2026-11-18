@@ -44,6 +44,8 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var first by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val setup = !pm.hasPin
     val title = when { !setup -> "Masukkan PIN"; first == null -> "Buat PIN baru (4 digit)"; else -> "Ulangi PIN" }
 
@@ -57,13 +59,29 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
     LaunchedEffect(Unit) { if (!setup && pm.biometric) bio() }
 
     fun press(k: String) {
+        if (checking) return
         error = ""
         if (k == "⌫") pin = pin.dropLast(1) else if (pin.length < 4) pin += k
         if (pin.length == 4) {
+            val entered = pin
             when {
-                !setup -> if (pm.verify(pin)) onUnlocked() else { error = "PIN salah, coba lagi"; pin = "" }
-                first == null -> { first = pin; pin = "" }
-                first == pin -> { pm.set(pin); onUnlocked() }
+                !setup -> {
+                    checking = true
+                    scope.launch {
+                        val valid = withContext(Dispatchers.IO) { pm.verify(entered) }
+                        checking = false
+                        if (valid) onUnlocked() else { error = "PIN salah, coba lagi"; pin = "" }
+                    }
+                }
+                first == null -> { first = entered; pin = "" }
+                first == entered -> {
+                    checking = true
+                    scope.launch {
+                        withContext(Dispatchers.IO) { pm.set(entered) }
+                        checking = false
+                        onUnlocked()
+                    }
+                }
                 else -> { error = "PIN tidak sama"; first = null; pin = "" }
             }
         }
