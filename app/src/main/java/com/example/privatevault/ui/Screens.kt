@@ -159,6 +159,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var target by remember { mutableStateOf<File?>(null) }
+    val selectedFiles = remember { mutableStateListOf<VaultFile>() }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
     var infoFile by remember { mutableStateOf<VaultFile?>(null) }
     var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
@@ -176,12 +177,20 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     }
     Scaffold(containerColor = Bg,
         floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
-        bottomBar = { NavigationBar(containerColor = Color0d) {
-            NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
-            NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
-            NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
-            NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-        } }) { pad ->
+        bottomBar = {
+            if (selectedFiles.isNotEmpty()) {
+                BottomAppBar(containerColor = Color0d) {
+                    Text("${selectedFiles.size} dipilih", Modifier.weight(1f), color = Muted)
+                    TextButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, null); Text("Favorit") }
+                    TextButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, null); Text("Sampah") }
+                }
+            } else NavigationBar(containerColor = Color0d) {
+                NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
+                NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
+                NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
+                NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
+            }
+        }) { pad ->
         LazyColumn(state = listState, modifier = Modifier.padding(pad).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { Image(painterResource(R.drawable.logo_mark_white), "Logo", Modifier.height(28.dp)); Spacer(Modifier.width(10.dp)); Text("Dhika App", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f)); IconButton(onTrash) { Icon(Icons.Default.DeleteOutline, "Sampah") } } }
             item {
@@ -206,7 +215,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
             if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), onLongClick = { actionFile = file }) { onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = selectedFiles.contains(file), onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
