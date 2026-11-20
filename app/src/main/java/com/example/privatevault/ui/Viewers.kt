@@ -292,19 +292,19 @@ fun CbzReader(
                     } else Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator() }
                 }
             }
-            Canvas(
+            if (controlsVisible) Canvas(
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(18.dp)
                     .pointerInput(names.size) {
                         detectDragGestures(
                             onDragStart = { p ->
-                                onInteraction()
                                 scope.launch { verticalListState.scrollToItem((p.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
                             },
                             onDrag = { change, _ ->
                                 change.consume()
-                                onInteraction()
                                 scope.launch { verticalListState.scrollToItem((change.position.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
-                            }
+                            },
+                            onDragEnd = { onInteraction() },
+                            onDragCancel = { onInteraction() }
                         )
                     }
             ) {
