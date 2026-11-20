@@ -132,9 +132,10 @@ class VaultRepository(private val ctx: Context) {
             true
         } finally { plain.delete() }
     }
-    fun copy(f: VaultFile): Boolean {
+    fun copy(f: VaultFile, destination: File = f.file.parentFile!!): Boolean {
+        if (!destination.isDirectory || !destination.canonicalPath.startsWith(root.canonicalPath)) return false
         val plain = runCatching { open(f) }.getOrNull() ?: return false
-        return try { runCatching { store(plain, f.file.parentFile!!, f.name) }.isSuccess }
+        return try { runCatching { store(plain, destination, f.name) }.isSuccess }
         finally { plain.delete() }
     }
     private fun reencryptFile(source: File, destination: File): Boolean {
