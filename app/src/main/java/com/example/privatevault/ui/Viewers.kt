@@ -58,19 +58,32 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
     if (safeFiles.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = initialIndex.coerceIn(safeFiles.indices)) { safeFiles.size }
     var fs by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
     var confirmDelete by remember { mutableStateOf(false) }
     val act = LocalContext.current as? Activity
     val view = LocalView.current
-    LaunchedEffect(fs) { setFullscreen(act, view, fs) }
-    LaunchedEffect(pager.currentPage) { if (pager.currentPage != initialIndex) fs = true }
-    DisposableEffect(Unit) { onDispose { setFullscreen(act, view, false) } }
+    LaunchedEffect(fs, pager.currentPage) {
+        setFullscreen(act, view, fs)
+        if (act != null) {
+            act.requestedOrientation = if (fs && safeFiles[pager.currentPage].type == MediaType.VIDEO)
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    LaunchedEffect(pager.currentPage) {
+        if (pager.currentPage != initialIndex) { fs = true; controlsVisible = false }
+    }
+    DisposableEffect(Unit) { onDispose {
+        setFullscreen(act, view, false)
+        act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    } }
     BackHandler(fs) { fs = false }
     val current = safeFiles[pager.currentPage]
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("Apakah anda ingin benar menghapusnya? File akan masuk ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { repo.delete(current); confirmDelete = false; onChanged(); onBack() }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
     Scaffold(containerColor = Color.Black,
-        topBar = { if (!fs) TopAppBar(title = { Text(current.name, maxLines = 1) }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
+        topBar = { if (!fs || controlsVisible) TopAppBar(title = { Text(current.name, maxLines = 1) }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0A0F1A))) },
-        bottomBar = { if (!fs) BottomAppBar(containerColor = Color(0xFF0A0F1A)) {
+        bottomBar = { if (!fs || controlsVisible) BottomAppBar(containerColor = Color(0xFF0A0F1A)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 val fav = repo.isFav(current)
                 IconButton({ repo.setFav(current, !fav); onChanged() }) { Icon(if (fav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (fav) Color.Red else Color.White) }
@@ -84,15 +97,20 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                     DisposableEffect(f.file.absolutePath) { onDispose { plain?.delete() } }
                     plain?.let { p ->
                         when (f.type) {
-                            MediaType.PHOTO -> ZoomImage(p) { fs = true }
-                            MediaType.VIDEO -> VideoPlayer(p) { fs = !fs }
-                            MediaType.COMIC -> CbzReader(p, fs) { fs = true }
+                            MediaType.PHOTO -> ZoomImage(p, onInteraction = { fs = true; controlsVisible = false },
+                                onTap = { if (fs) controlsVisible = !controlsVisible else controlsVisible = true })
+                            MediaType.VIDEO -> VideoPlayer(p,
+                                onFullscreen = { fs = !fs; controlsVisible = true },
+                                onControlsVisibility = { controlsVisible = it })
+                            MediaType.COMIC -> CbzReader(p, fs, onInteraction = { fs = true; controlsVisible = false },
+                                controlsVisible = controlsVisible,
+                                onToggleControls = { controlsVisible = !controlsVisible })
                             null -> Unit
                         }
                     } ?: CircularProgressIndicator()
                 }
             }
-            Text("${pager.currentPage + 1} / ${safeFiles.size}", Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp), color = Color.White)
+            if (!fs || controlsVisible) Text("${pager.currentPage + 1} / ${safeFiles.size}", Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp), color = Color.White)
         }
     }
 }
@@ -109,7 +127,7 @@ private fun setFullscreen(act: Activity?, view: View, on: Boolean) {
 }
 
 @Composable
-fun ZoomImage(file: File, onInteraction: () -> Unit = {}) {
+fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}) {
     var scale by remember(file) { mutableFloatStateOf(1f) }
     var offsetX by remember(file) { mutableFloatStateOf(0f) }
     var offsetY by remember(file) { mutableFloatStateOf(0f) }
@@ -161,10 +179,13 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}) {
                 }
             }
             .pointerInput(file) {
-                detectTapGestures(onDoubleTap = {
-                    if (scale > 1f) { scale = 1f; offsetX = 0f; offsetY = 0f }
-                    else scale = 2f
-                })
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onDoubleTap = {
+                        if (scale > 1f) { scale = 1f; offsetX = 0f; offsetY = 0f }
+                        else scale = 2f
+                    }
+                )
             }
             .graphicsLayer {
                 scaleX = scale
@@ -176,17 +197,30 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}) {
 }
 
 @Composable
-fun VideoPlayer(file: File, onFullscreen: () -> Unit) {
+fun VideoPlayer(file: File, onFullscreen: () -> Unit, onControlsVisibility: (Boolean) -> Unit = {}) {
     val toggleFs by rememberUpdatedState(onFullscreen)
     val ctx = LocalContext.current
     val player = remember(file) { ExoPlayer.Builder(ctx).build().apply { setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file))); prepare(); playWhenReady = true } }
     DisposableEffect(player) { onDispose { player.release() } }
-    AndroidView({ PlayerView(it).apply { this.player = player; setShowNextButton(false); setShowPreviousButton(false); setFullscreenButtonClickListener { toggleFs() } } }, Modifier.fillMaxSize())
+    val visibilityCallback by rememberUpdatedState(onControlsVisibility)
+    AndroidView({ PlayerView(it).apply {
+        this.player = player
+        setShowNextButton(false)
+        setShowPreviousButton(false)
+        setFullscreenButtonClickListener { toggleFs() }
+        setControllerVisibilityListener { visibility -> visibilityCallback(visibility == View.VISIBLE) }
+    } }, Modifier.fillMaxSize())
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit = {}) {
+fun CbzReader(
+    file: File,
+    fullscreen: Boolean = false,
+    onInteraction: () -> Unit = {},
+    controlsVisible: Boolean = true,
+    onToggleControls: () -> Unit = {}
+) {
     val names = remember(file) {
         runCatching {
             ZipFile(file).use { z ->
@@ -237,7 +271,9 @@ fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit
                 label = { Text("Strip panjang") }
             )
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(fullscreen) {
+            detectTapGestures(onTap = { onToggleControls() })
+        }) {
             if (verticalMode) {
                 androidx.compose.foundation.lazy.LazyColumn(
                     state = verticalListState,
@@ -306,6 +342,36 @@ fun CbzReader(file: File, fullscreen: Boolean = false, onInteraction: () -> Unit
                         .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
                     color = Color.White
                 )
+            }
+        }
+        if (!fullscreen || controlsVisible) {
+            val pageIndex = if (verticalMode) verticalListState.firstVisibleItemIndex else pager.currentPage
+            Row(
+                Modifier.fillMaxWidth().background(Color(0xFF17191F)).padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(onClick = {
+                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((pageIndex - 1).coerceAtLeast(0)) }
+                    else scope.launch { pager.animateScrollToPage((pageIndex - 1).coerceAtLeast(0)) }
+                }, enabled = pageIndex > 0) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
+                Text("${pageIndex + 1}", color = Color.White)
+                Slider(
+                    value = pageIndex.toFloat(),
+                    onValueChange = { value ->
+                        val target = value.toInt().coerceIn(0, names.lastIndex)
+                        if (verticalMode) scope.launch { verticalListState.scrollToItem(target) }
+                        else scope.launch { pager.scrollToPage(target) }
+                    },
+                    valueRange = 0f..${names.lastIndex.toFloat().coerceAtLeast(1f)},
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Color(0xFF1D69D8), inactiveTrackColor = Color(0xFF667085))
+                )
+                Text("${names.size}", color = Color.White)
+                IconButton(onClick = {
+                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((pageIndex + 1).coerceAtMost(names.lastIndex)) }
+                    else scope.launch { pager.animateScrollToPage((pageIndex + 1).coerceAtMost(names.lastIndex)) }
+                }, enabled = pageIndex < names.lastIndex) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
             }
         }
     }
