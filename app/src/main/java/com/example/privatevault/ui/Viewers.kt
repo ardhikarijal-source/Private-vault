@@ -264,12 +264,18 @@ fun CbzReader(
             }
         }
     }
-    LaunchedEffect(pager.currentPage) { onInteraction() }
+    var previousPage by remember(file) { mutableIntStateOf(pager.currentPage) }
+    LaunchedEffect(pager.currentPage) {
+        if (pager.currentPage != previousPage) onInteraction()
+        previousPage = pager.currentPage
+    }
     if (names.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
         return
     }
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(file, verticalMode) {
+        detectTapGestures(onTap = { onToggleControls() })
+    }) {
         if (verticalMode) {
             androidx.compose.foundation.lazy.LazyColumn(
                 state = verticalListState,
@@ -317,9 +323,6 @@ fun CbzReader(
                     ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             }
         }
-        Box(Modifier.fillMaxSize().pointerInput(file, verticalMode) {
-            detectTapGestures(onTap = { onToggleControls() })
-        })
         if (controlsVisible) {
             Row(
                 Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
