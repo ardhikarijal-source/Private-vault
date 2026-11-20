@@ -157,7 +157,7 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 /* ---------- HOME ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true) {
     val all = remember(version) { repo.allFiles() }
     val folders = remember(version) { repo.folders() }
     var q by remember { mutableStateOf("") }
@@ -187,7 +187,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
-        bottomBar = { NavigationBar(
+        bottomBar = { if (showBottomNav) NavigationBar(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
                 .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
             containerColor = Color0d
@@ -196,7 +196,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-            }
+            } else null
         }) { pad ->
         LazyColumn(state = listState, modifier = Modifier.padding(pad).background(Brush.verticalGradient(listOf(Color(0xFF0B1426), Bg, Color(0xFF080E19)))).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -277,7 +277,7 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack, clipboard: List<VaultFile> = emptyList(), onClipboardChange: (List<VaultFile>) -> Unit = {}) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack, clipboard: List<VaultFile> = emptyList(), onClipboardChange: (List<VaultFile>) -> Unit = {}, showBottomNav: Boolean = true) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
@@ -311,7 +311,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
         bottomBar = {
-            if (folder == null || rootFiles) NavigationBar(
+            if (showBottomNav && (folder == null || rootFiles)) NavigationBar(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
                     .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
                 containerColor = Color0d
