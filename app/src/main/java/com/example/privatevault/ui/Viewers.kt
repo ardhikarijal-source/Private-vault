@@ -208,7 +208,7 @@ fun VideoPlayer(file: File, onFullscreen: () -> Unit, onControlsVisibility: (Boo
         setShowNextButton(false)
         setShowPreviousButton(false)
         setFullscreenButtonClickListener { toggleFs() }
-        setControllerVisibilityListener { visibility -> visibilityCallback(visibility == View.VISIBLE) }
+        setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility -> visibilityCallback(visibility == View.VISIBLE) })
     } }, Modifier.fillMaxSize())
 }
 
@@ -363,7 +363,7 @@ fun CbzReader(
                         if (verticalMode) scope.launch { verticalListState.scrollToItem(target) }
                         else scope.launch { pager.scrollToPage(target) }
                     },
-                    valueRange = 0f..${names.lastIndex.toFloat().coerceAtLeast(1f)},
+                    valueRange = 0f..names.lastIndex.toFloat().coerceAtLeast(1f),
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Color(0xFF1D69D8), inactiveTrackColor = Color(0xFF667085))
                 )
