@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.*
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -204,7 +205,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                         Text("Dhika App", fontSize = 25.sp, fontWeight = FontWeight.Bold)
                         Text("Semua file aman, dalam satu tempat", color = Muted, fontSize = 12.sp)
                     }
-                    IconButton(onTrash, modifier = Modifier.glassSurface(CircleShape).size(46.dp)) { Icon(Icons.Default.DeleteOutline, "Sampah") }
+                    IconButton(onTrash, modifier = Modifier.glassSurface(RoundedCornerShape(50.dp)).size(46.dp)) { Icon(Icons.Default.DeleteOutline, "Sampah") }
                 }
             }
             item {
