@@ -159,6 +159,7 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 @Composable
 fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit) {
     val all = remember(version) { repo.allFiles() }
+    val folders = remember(version) { repo.folders() }
     var q by remember { mutableStateOf("") }
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
@@ -227,7 +228,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(repo.folders()) { f ->
+                    items(folders) { f ->
                         Column(Modifier.width(92.dp).glassSurface(RoundedCornerShape(17.dp)).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1); Text("${repo.files(f).size} item", fontSize = 11.sp, color = Muted)
                         }
@@ -276,7 +277,7 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 /* ---------- FOLDER / FAVORIT ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack) {
+fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack, clipboard: List<VaultFile> = emptyList(), onClipboardChange: (List<VaultFile>) -> Unit = {}) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
@@ -319,15 +320,31 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-            } else if (sel.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
-                listOf(Triple("Pindahkan", Icons.Default.DriveFileMove) { if (sel.isNotEmpty()) moveDlg = true },
-                    Triple("Salin", Icons.Default.ContentCopy) {
-                        val selected = sel.toList()
-                        scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::copy) }; sel.clear(); onChanged() }
-                        Unit
-                    },
-                    Triple("Hapus", Icons.Default.Delete) { if (sel.isNotEmpty()) confirmDelete = true }).forEach { (l, ic, act) ->
-                    TextButton(act, Modifier.weight(1f)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(ic, null); Text(l, fontSize = 11.sp) } } }
+            } else if (folder != null && (sel.isNotEmpty() || clipboard.isNotEmpty())) BottomAppBar(containerColor = Color0d) {
+                if (sel.isNotEmpty()) {
+                    listOf(
+                        Triple("Pindahkan", Icons.Default.DriveFileMove) { moveDlg = true },
+                        Triple("Salin", Icons.Default.ContentCopy) { onClipboardChange(sel.toList()); sel.clear() },
+                        Triple("Hapus", Icons.Default.Delete) { confirmDelete = true }
+                    ).forEach { (label, icon, action) ->
+                        TextButton(action, Modifier.weight(1f)) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(icon, null); Text(label, fontSize = 11.sp) }
+                        }
+                    }
+                } else {
+                    TextButton(onClick = {
+                        val pending = clipboard.toList()
+                        scope.launch {
+                            withContext(Dispatchers.IO) { pending.forEach { repo.copy(it, folder) } }
+                            onClipboardChange(emptyList())
+                            onChanged()
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.ContentPaste, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Tempel " + clipboard.size + " file")
+                    }
+                }
             }
         }) { pad ->
         Column(Modifier.padding(pad)) {
@@ -336,7 +353,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f, selected = if (sel.isNotEmpty() || folder != null || rootFiles) sel.contains(f) else null, onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) }, onLongClick = { if (folder == null && !rootFiles) { if (!sel.contains(f)) sel.add(f) } else actionFile = f }) { if (sel.isNotEmpty()) { if (sel.contains(f)) sel.remove(f) else sel.add(f) } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
+                    Thumb(repo, f,
+                        selected = if (sel.isNotEmpty()) sel.contains(f) else null,
+                        onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) },
+                        onLongClick = { if (!sel.contains(f)) sel.add(f) }
+                    ) {
+                        if (sel.isNotEmpty()) {
+                            if (sel.contains(f)) sel.remove(f) else sel.add(f)
+                        } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                    }
                 }
             }
         }
