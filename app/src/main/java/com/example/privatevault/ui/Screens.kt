@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -183,35 +185,61 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
-        bottomBar = { NavigationBar(containerColor = Color0d) {
+        bottomBar = { NavigationBar(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
+                .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
+            containerColor = Color0d
+        ) {
                 NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
                 NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
             }
         }) { pad ->
-        LazyColumn(state = listState, modifier = Modifier.padding(pad).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { Image(painterResource(R.drawable.logo_mark_white), "Logo", Modifier.height(28.dp)); Spacer(Modifier.width(10.dp)); Text("Dhika App", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f)); IconButton(onTrash) { Icon(Icons.Default.DeleteOutline, "Sampah") } } }
+        LazyColumn(state = listState, modifier = Modifier.padding(pad).background(Brush.verticalGradient(listOf(Color(0xFF0B1426), Bg, Color(0xFF080E19)))).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card).padding(vertical = 14.dp)) {
+                Row(Modifier.padding(top = 18.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("RUANG PRIBADI", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        Text("Dhika App", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                        Text("Semua file aman, dalam satu tempat", color = Muted, fontSize = 12.sp)
+                    }
+                    IconButton(onTrash, modifier = Modifier.glassSurface(CircleShape).size(46.dp)) { Icon(Icons.Default.DeleteOutline, "Sampah") }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth().glassSurface(RoundedCornerShape(20.dp)).padding(vertical = 16.dp)) {
                     listOf("Foto" to MediaType.PHOTO, "Video" to MediaType.VIDEO, "Komik" to MediaType.COMIC).forEach { (n, t) ->
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { Text("${all.count { it.type == t }}", fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(n, color = Muted) }
                     }
                 }
             }
             item { OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Cari file…") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp)) }
-            item { Text("Folder Saya", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Folder Saya", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                        Text("Akses cepat ke koleksi pribadi", color = Muted, fontSize = 11.sp)
+                    }
+                    Text("${repo.folders().size} folder", color = Muted, fontSize = 11.sp)
+                }
+            }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(repo.folders()) { f ->
-                        Column(Modifier.width(78.dp).clip(RoundedCornerShape(14.dp)).background(Card).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(Modifier.width(92.dp).glassSurface(RoundedCornerShape(17.dp)).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1); Text("${repo.files(f).size} item", fontSize = 11.sp, color = Muted)
                         }
                     }
-                    item { Column(Modifier.width(78.dp).clip(RoundedCornerShape(14.dp)).background(Card).clickable { newDialog = true }.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Add, null, modifier = Modifier.size(34.dp)); Text("Folder Baru", fontSize = 12.sp) } }
+                    item { Column(Modifier.width(92.dp).glassSurface(RoundedCornerShape(17.dp)).clickable { newDialog = true }.padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Add, null, modifier = Modifier.size(34.dp)); Text("Folder Baru", fontSize = 12.sp) } }
                 }
             }
-            item { Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+            item {
+                Column {
+                    Text("Media Terbaru", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                    Text("Lanjutkan membuka foto, video, dan komik", color = Muted, fontSize = 11.sp)
+                }
+            }
             if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = if (selectedFiles.isNotEmpty()) selectedFiles.contains(file) else null, onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
@@ -228,7 +256,12 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     infoFolder?.let { FolderInfoDialog(it) { infoFolder = null } }
     deleteFolder?.let { folder -> AlertDialog(onDismissRequest = { deleteFolder = null }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = null }) { Text("Tidak") } }) }
 }
-private val Color0d = androidx.compose.ui.graphics.Color(0xFF0D1527)
+private val Color0d = androidx.compose.ui.graphics.Color(0xCC0D1527)
+
+private fun Modifier.glassSurface(shape: RoundedCornerShape = RoundedCornerShape(20.dp)): Modifier =
+    this.clip(shape)
+        .background(Brush.linearGradient(listOf(Color(0xCC263B61), Color(0x99202D49), Color(0xAA111B30))))
+        .border(1.dp, Brush.linearGradient(listOf(Color(0x99B9D2FF), Color(0x224F83D8), Color(0x667A91B8))), shape)
 
 @Composable
 fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
@@ -276,7 +309,11 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
         bottomBar = {
-            if (folder == null || rootFiles) NavigationBar(containerColor = Color0d) {
+            if (folder == null || rootFiles) NavigationBar(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
+                    .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
+                containerColor = Color0d
+            ) {
                 NavigationBarItem(false, onHome, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
                 NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
