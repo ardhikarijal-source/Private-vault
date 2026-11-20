@@ -1,11 +1,8 @@
 package com.example.privatevault.ui
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.View
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -38,9 +35,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -214,18 +208,26 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}
 }
 
 @Composable
-fun VideoPlayer(file: File, onFullscreen: () -> Unit, onControlsVisibility: (Boolean) -> Unit = {}) {
-    val toggleFs by rememberUpdatedState(onFullscreen)
+fun VideoPlayer(file: File, onControlsVisibility: (Boolean) -> Unit = {}) {
     val ctx = LocalContext.current
-    val player = remember(file) { ExoPlayer.Builder(ctx).build().apply { setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file))); prepare(); playWhenReady = true } }
+    val player = remember(file) {
+        ExoPlayer.Builder(ctx).build().apply {
+            setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+            prepare()
+            playWhenReady = true
+        }
+    }
     DisposableEffect(player) { onDispose { player.release() } }
     val visibilityCallback by rememberUpdatedState(onControlsVisibility)
     AndroidView({ PlayerView(it).apply {
         this.player = player
+        useController = true
+        controllerShowTimeoutMs = 2500
         setShowNextButton(false)
         setShowPreviousButton(false)
-        setFullscreenButtonClickListener { toggleFs() }
-        setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility -> visibilityCallback(visibility == View.VISIBLE) })
+        setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+            visibilityCallback(visibility == View.VISIBLE)
+        })
     } }, Modifier.fillMaxSize())
 }
 
@@ -251,13 +253,9 @@ fun CbzReader(
     }
     var verticalMode by remember(file) { mutableStateOf(false) }
     val pager = rememberPagerState { names.size }
-    var previousPage by remember(file) { mutableIntStateOf(0) }
-    LaunchedEffect(pager.currentPage) {
-        if (pager.currentPage != previousPage) onInteraction()
-        previousPage = pager.currentPage
-    }
     val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val currentIndex = if (verticalMode) verticalListState.firstVisibleItemIndex else pager.currentPage
     val scrollConnection = remember(onInteraction) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
@@ -266,115 +264,86 @@ fun CbzReader(
             }
         }
     }
+    LaunchedEffect(pager.currentPage) { onInteraction() }
     if (names.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
         return
     }
-    Column(Modifier.fillMaxSize().background(Color.Black)) {
-        if (!fullscreen) Row(
-            Modifier.fillMaxWidth().background(Color(0xFF101010)).padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FilterChip(
-                selected = !verticalMode,
-                onClick = { verticalMode = false },
-                label = { Text("Swipe ke samping") }
-            )
-            Spacer(Modifier.width(10.dp))
-            FilterChip(
-                selected = verticalMode,
-                onClick = { verticalMode = true },
-                label = { Text("Strip panjang") }
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth().pointerInput(fullscreen) {
-            detectTapGestures(onTap = { onToggleControls() })
-        }) {
-            if (verticalMode) {
-                androidx.compose.foundation.lazy.LazyColumn(
-                    state = verticalListState,
-                    modifier = Modifier.fillMaxSize().nestedScroll(scrollConnection),
-                    contentPadding = PaddingValues(0.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    items(names.size, key = { names[it] }) { index ->
-                        val bmp by produceState<Bitmap?>(null, index, file) {
-                            value = loadCbzPage(file, names[index])
-                        }
-                        if (bmp != null) {
-                            Image(
-                                bmp!!.asImageBitmap(),
-                                contentDescription = "Halaman ${index + 1}",
-                                modifier = Modifier.fillMaxWidth().wrapContentHeight().background(Color.White),
-                                contentScale = ContentScale.FillWidth
-                            )
-                        } else {
-                            Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) {
-                                CircularProgressIndicator()
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (verticalMode) {
+            androidx.compose.foundation.lazy.LazyColumn(
+                state = verticalListState,
+                modifier = Modifier.fillMaxSize().nestedScroll(scrollConnection),
+                contentPadding = PaddingValues(0.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                items(names.size, key = { names[it] }) { index ->
+                    val bmp by produceState<Bitmap?>(null, index, file) { value = loadCbzPage(file, names[index]) }
+                    if (bmp != null) {
+                        Image(bmp!!.asImageBitmap(), "Halaman ${index + 1}",
+                            Modifier.fillMaxWidth().wrapContentHeight().background(Color.White),
+                            contentScale = ContentScale.FillWidth)
+                    } else Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator() }
+                }
+            }
+            Canvas(
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(18.dp)
+                    .pointerInput(names.size) {
+                        detectDragGestures(
+                            onDragStart = { p ->
+                                onInteraction()
+                                scope.launch { verticalListState.scrollToItem((p.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                onInteraction()
+                                scope.launch { verticalListState.scrollToItem((change.position.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
                             }
-                        }
+                        )
                     }
-                }
-                if (!fullscreen) Text(
-                    "${(verticalListState.firstVisibleItemIndex + 1).coerceAtMost(names.size)} / ${names.size}",
-                    Modifier.align(Alignment.BottomCenter).padding(12.dp)
-                        .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
-                    color = Color.White
-                )
-                if (!fullscreen || controlsVisible) Canvas(
-                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
-                        .pointerInput(names.size) {
-                            detectDragGestures(
-                                onDragStart = { p ->
-                                    onInteraction()
-                                    scope.launch { verticalListState.scrollToItem((p.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    onInteraction()
-                                    scope.launch { verticalListState.scrollToItem((change.position.y / size.height * names.size).toInt().coerceIn(0, names.lastIndex)) }
-                                }
-                            )
-                        }
-                ) {
-                    val h = size.height
-                    val thumbH = (h / names.size.coerceAtLeast(1)).coerceAtLeast(30.dp.toPx())
-                    val y = (h - thumbH) * (verticalListState.firstVisibleItemIndex.toFloat() / names.size.coerceAtLeast(1))
-                    drawRoundRect(Color(0x55888888), Offset(size.width / 2 - 2.dp.toPx(), 0f), androidx.compose.ui.geometry.Size(4.dp.toPx(), h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
-                    drawRoundRect(Color.White, Offset(size.width / 2 - 3.dp.toPx(), y), androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
-                }
-            } else {
-                HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-                    val bmp by produceState<Bitmap?>(null, page, file) {
-                        value = loadCbzPage(file, names[page])
-                    }
-                    bmp?.let {
-                        Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit)
-                    } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-                }
-                if (!fullscreen) Text(
-                    "${pager.currentPage + 1} / ${names.size}",
-                    Modifier.align(Alignment.BottomCenter).padding(12.dp)
-                        .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
-                    color = Color.White
-                )
+            ) {
+                val h = size.height
+                val thumbH = (h / names.size.coerceAtLeast(1)).coerceAtLeast(30.dp.toPx())
+                val y = (h - thumbH) * (verticalListState.firstVisibleItemIndex.toFloat() / names.size.coerceAtLeast(1))
+                drawRoundRect(Color(0x55888888), Offset(size.width / 2 - 2.dp.toPx(), 0f),
+                    androidx.compose.ui.geometry.Size(4.dp.toPx(), h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
+                drawRoundRect(Color.White, Offset(size.width / 2 - 3.dp.toPx(), y),
+                    androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
+            }
+        } else {
+            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, names[page]) }
+                bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) }
+                    ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             }
         }
-        if (!fullscreen || controlsVisible) {
-            val pageIndex = if (verticalMode) verticalListState.firstVisibleItemIndex else pager.currentPage
+        Box(Modifier.fillMaxSize().pointerInput(file, verticalMode) {
+            detectTapGestures(onTap = { onToggleControls() })
+        })
+        if (controlsVisible) {
             Row(
-                Modifier.fillMaxWidth().background(Color(0xFF17191F)).padding(horizontal = 10.dp, vertical = 8.dp),
+                Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                    .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(selected = !verticalMode, onClick = { verticalMode = false }, label = { Text("Halaman") })
+                FilterChip(selected = verticalMode, onClick = { verticalMode = true }, label = { Text("Gulir panjang") })
+            }
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp)
+                    .background(Color(0xDD101827), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 IconButton(onClick = {
-                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((pageIndex - 1).coerceAtLeast(0)) }
-                    else scope.launch { pager.animateScrollToPage((pageIndex - 1).coerceAtLeast(0)) }
-                }, enabled = pageIndex > 0) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
-                Text("${pageIndex + 1}", color = Color.White)
+                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((currentIndex - 1).coerceAtLeast(0)) }
+                    else scope.launch { pager.animateScrollToPage((currentIndex - 1).coerceAtLeast(0)) }
+                }, enabled = currentIndex > 0) { Icon(Icons.Default.SkipPrevious, null, tint = Color.White) }
+                Text("${currentIndex + 1}", color = Color.White)
                 Slider(
-                    value = pageIndex.toFloat(),
+                    value = currentIndex.toFloat(),
                     onValueChange = { value ->
                         val target = value.toInt().coerceIn(0, names.lastIndex)
                         if (verticalMode) scope.launch { verticalListState.scrollToItem(target) }
@@ -386,9 +355,9 @@ fun CbzReader(
                 )
                 Text("${names.size}", color = Color.White)
                 IconButton(onClick = {
-                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((pageIndex + 1).coerceAtMost(names.lastIndex)) }
-                    else scope.launch { pager.animateScrollToPage((pageIndex + 1).coerceAtMost(names.lastIndex)) }
-                }, enabled = pageIndex < names.lastIndex) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
+                    if (verticalMode) scope.launch { verticalListState.animateScrollToItem((currentIndex + 1).coerceAtMost(names.lastIndex)) }
+                    else scope.launch { pager.animateScrollToPage((currentIndex + 1).coerceAtMost(names.lastIndex)) }
+                }, enabled = currentIndex < names.lastIndex) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
             }
         }
     }
