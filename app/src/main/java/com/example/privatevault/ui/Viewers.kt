@@ -305,7 +305,7 @@ fun CbzReader(
                         .background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp),
                     color = Color.White
                 )
-                Canvas(
+                if (!fullscreen || controlsVisible) Canvas(
                     Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
                         .pointerInput(names.size) {
                             detectDragGestures(
