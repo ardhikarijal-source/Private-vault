@@ -51,78 +51,95 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.zip.ZipFile
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: Int, onBack: () -> Unit, onChanged: () -> Unit) {
     val safeFiles = remember(files) { files.ifEmpty { emptyList() } }
     if (safeFiles.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = initialIndex.coerceIn(safeFiles.indices)) { safeFiles.size }
-    var fs by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val act = LocalContext.current as? Activity
-    val view = LocalView.current
-    LaunchedEffect(fs, pager.currentPage) {
-        setFullscreen(act, view, fs)
-        if (act != null) {
-            act.requestedOrientation = if (fs && safeFiles[pager.currentPage].type == MediaType.VIDEO)
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
-    LaunchedEffect(pager.currentPage) {
-        if (pager.currentPage != initialIndex) { fs = true; controlsVisible = false }
-    }
-    DisposableEffect(Unit) { onDispose {
-        setFullscreen(act, view, false)
-        act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    } }
-    BackHandler(fs) { fs = false }
+    var infoVisible by remember { mutableStateOf(false) }
+    var favorite by remember(safeFiles[pager.currentPage].file.absolutePath) { mutableStateOf(repo.isFav(safeFiles[pager.currentPage])) }
     val current = safeFiles[pager.currentPage]
-    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("Apakah anda ingin benar menghapusnya? File akan masuk ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { repo.delete(current); confirmDelete = false; onChanged(); onBack() }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
-    Scaffold(containerColor = Color.Black,
-        topBar = { if (!fs || controlsVisible) TopAppBar(title = { Text(current.name, maxLines = 1) }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0A0F1A))) },
-        bottomBar = { if (!fs || controlsVisible) BottomAppBar(containerColor = Color(0xFF0A0F1A)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                val fav = repo.isFav(current)
-                IconButton({ repo.setFav(current, !fav); onChanged() }) { Icon(if (fav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (fav) Color.Red else Color.White) }
-                IconButton({ confirmDelete = true }) { Icon(Icons.Default.Delete, null) }
-            } } }) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize(), Alignment.Center) {
-            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { safeFiles[it].file.absolutePath }) { page ->
-                val f = safeFiles[page]
-                key(f.file.absolutePath) {
-                    val plain by produceState<File?>(null, f.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.open(f) } }
-                    DisposableEffect(f.file.absolutePath) { onDispose { plain?.delete() } }
-                    plain?.let { p ->
-                        when (f.type) {
-                            MediaType.PHOTO -> ZoomImage(p, onInteraction = { fs = true; controlsVisible = false },
-                                onTap = { if (fs) controlsVisible = !controlsVisible else controlsVisible = true })
-                            MediaType.VIDEO -> VideoPlayer(p,
-                                onFullscreen = { fs = !fs; controlsVisible = true },
-                                onControlsVisibility = { controlsVisible = it })
-                            MediaType.COMIC -> CbzReader(p, fs, onInteraction = { fs = true; controlsVisible = false },
-                                controlsVisible = controlsVisible,
-                                onToggleControls = { controlsVisible = !controlsVisible })
-                            null -> Unit
-                        }
-                    } ?: CircularProgressIndicator()
-                }
-            }
-            if (!fs || controlsVisible) Text("${pager.currentPage + 1} / ${safeFiles.size}", Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 4.dp), color = Color.White)
-        }
-    }
-}
+    val scope = rememberCoroutineScope()
 
-private fun setFullscreen(act: Activity?, view: View, on: Boolean) {
-    val w = act?.window ?: return
-    val c = WindowCompat.getInsetsController(w, view)
-    if (on) {
-        c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        c.hide(WindowInsetsCompat.Type.systemBars())
-    } else {
-        c.show(WindowInsetsCompat.Type.systemBars())
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Hapus file?") },
+        text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") },
+        confirmButton = { TextButton(onClick = {
+            confirmDelete = false
+            scope.launch { withContext(Dispatchers.IO) { repo.delete(current) }; onChanged(); onBack() }
+        }) { Text("Hapus") } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Batal") } }
+    )
+    if (infoVisible) AlertDialog(
+        onDismissRequest = { infoVisible = false },
+        title = { Text("Informasi File") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Nama: ${current.name}")
+            Text("Jenis: ${current.file.extension.uppercase()}")
+            Text("Ukuran: ${android.text.format.Formatter.formatShortFileSize(LocalContext.current, current.file.length())}")
+            Text("Lokasi: ${current.file.parentFile?.name ?: "Penyimpanan"}")
+            Text("Diubah: ${java.util.Date(current.file.lastModified())}")
+        } },
+        confirmButton = { TextButton({ infoVisible = false }) { Text("Tutup") } }
+    )
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { safeFiles[it].file.absolutePath }) { page ->
+            val f = safeFiles[page]
+            key(f.file.absolutePath) {
+                val plain by produceState<File?>(null, f.file.absolutePath) {
+                    value = withContext(Dispatchers.IO) { repo.open(f) }
+                }
+                DisposableEffect(f.file.absolutePath) { onDispose { plain?.delete() } }
+                plain?.let { p ->
+                    when (f.type) {
+                        MediaType.PHOTO -> ZoomImage(p,
+                            onInteraction = { controlsVisible = false },
+                            onTap = { controlsVisible = !controlsVisible })
+                        MediaType.VIDEO -> VideoPlayer(p,
+                            onControlsVisibility = { controlsVisible = it })
+                        MediaType.COMIC -> CbzReader(p,
+                            onInteraction = { controlsVisible = false },
+                            controlsVisible = controlsVisible,
+                            onToggleControls = { controlsVisible = !controlsVisible })
+                        null -> Unit
+                    }
+                } ?: CircularProgressIndicator()
+            }
+        }
+        if (controlsVisible) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
+                    .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
+            ) { Icon(Icons.Default.ArrowBack, "Kembali", tint = Color.White) }
+            Row(
+                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .background(Color(0xCC111827), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    favorite = !favorite
+                    repo.setFav(current, favorite)
+                    onChanged()
+                }) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorit", tint = if (favorite) Color(0xFFFF6685) else Color.White) }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Hapus", tint = Color.White) }
+                IconButton(onClick = { infoVisible = true }) { Icon(Icons.Default.Info, "Informasi", tint = Color.White) }
+            }
+            Text(
+                "${pager.currentPage + 1} / ${safeFiles.size}",
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)
+                    .background(Color(0xAA101827), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                color = Color.White
+            )
+        }
     }
 }
 
