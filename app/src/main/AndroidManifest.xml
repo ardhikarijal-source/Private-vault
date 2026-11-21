@@ -7,7 +7,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.DhikaApp">
         <activity android:name=".MainActivity" android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
             <intent-filter>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Latar gelap sejak awal supaya tidak ada kilatan putih saat aplikasi dibuka -->
+    <style name="Theme.DhikaApp" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/vault_bg</item>
+    </style>
+</resources>

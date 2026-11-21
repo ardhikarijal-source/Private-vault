@@ -85,24 +85,29 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { safeFiles[it].file.absolutePath }) { page ->
             val f = safeFiles[page]
             key(f.file.absolutePath) {
-                val plain by produceState<File?>(null, f.file.absolutePath) {
-                    value = withContext(Dispatchers.IO) { repo.open(f) }
+                // first = sudah selesai dicoba, second = file hasil dekripsi (null jika gagal)
+                val opened by produceState<Pair<Boolean, File?>>(false to null, f.file.absolutePath) {
+                    value = true to withContext(Dispatchers.IO) { runCatching { repo.open(f) }.getOrNull() }
                 }
-                DisposableEffect(f.file.absolutePath) { onDispose { plain?.delete() } }
-                plain?.let { p ->
+                val openedFile by rememberUpdatedState(opened.second)
+                DisposableEffect(f.file.absolutePath) { onDispose { openedFile?.delete() } }
+                val plain = opened.second
+                if (plain != null) {
                     when (f.type) {
-                        MediaType.PHOTO -> ZoomImage(p,
+                        MediaType.PHOTO -> ZoomImage(plain,
                             onInteraction = { controlsVisible = false },
                             onTap = { controlsVisible = !controlsVisible })
-                        MediaType.VIDEO -> VideoPlayer(p,
+                        MediaType.VIDEO -> VideoPlayer(plain, active = pager.currentPage == page,
                             onControlsVisibility = { controlsVisible = it })
-                        MediaType.COMIC -> CbzReader(p,
+                        MediaType.COMIC -> CbzReader(plain,
                             onInteraction = { controlsVisible = false },
                             controlsVisible = controlsVisible,
                             onToggleControls = { controlsVisible = !controlsVisible })
                         null -> Unit
                     }
-                } ?: CircularProgressIndicator()
+                } else Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    if (!opened.first) CircularProgressIndicator() else Text("File tidak dapat dibuka", color = Color.White)
+                }
             }
         }
         if (controlsVisible) {
@@ -142,8 +147,14 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}
     var scale by remember(file) { mutableFloatStateOf(1f) }
     var offsetX by remember(file) { mutableFloatStateOf(0f) }
     var offsetY by remember(file) { mutableFloatStateOf(0f) }
-    androidx.compose.foundation.Image(
-        painter = coil.compose.rememberAsyncImagePainter(file),
+    val ctx = LocalContext.current
+    val request = remember(file) {
+        coil.request.ImageRequest.Builder(ctx).data(file).size(2048, 2048)
+            .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build() // jangan simpan foto brankas di cache memori
+    }
+    coil.compose.AsyncImage(
+        model = request,
+        imageLoader = ViewerImages.loader(ctx),
         contentDescription = "Foto, cubit untuk memperbesar",
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().clipToBounds()
@@ -168,8 +179,10 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}
                             val panX = ((a.position.x + b.position.x) - (a.previousPosition.x + b.previousPosition.x)) / 2f
                             val panY = ((a.position.y + b.position.y) - (a.previousPosition.y + b.previousPosition.y)) / 2f
                             scale = next
-                            offsetX = if (scale == 1f) 0f else (offsetX * factor + panX).coerceIn(-size.width.toFloat(), size.width.toFloat())
-                            offsetY = if (scale == 1f) 0f else (offsetY * factor + panY).coerceIn(-size.height.toFloat(), size.height.toFloat())
+                            val limitX = size.width.toFloat() * (scale - 1f) / 2f
+                            val limitY = size.height.toFloat() * (scale - 1f) / 2f
+                            offsetX = if (scale == 1f) 0f else (offsetX * factor + panX).coerceIn(-limitX, limitX)
+                            offsetY = if (scale == 1f) 0f else (offsetY * factor + panY).coerceIn(-limitY, limitY)
                             event.changes.forEach { it.consume() }
                         } else if (active.size == 1 && scale > 1f) {
                             val change = active.first()
@@ -208,16 +221,24 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}
 }
 
 @Composable
-fun VideoPlayer(file: File, onControlsVisibility: (Boolean) -> Unit = {}) {
+fun VideoPlayer(file: File, active: Boolean = true, onControlsVisibility: (Boolean) -> Unit = {}) {
     val ctx = LocalContext.current
     val player = remember(file) {
         ExoPlayer.Builder(ctx).build().apply {
             setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
             prepare()
-            playWhenReady = true
+            playWhenReady = active
         }
     }
     DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(active) { player.playWhenReady = active }
+    // Jangan biarkan suara video terus berjalan saat aplikasi ke background / terkunci.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) player.pause() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val visibilityCallback by rememberUpdatedState(onControlsVisibility)
     AndroidView({ PlayerView(it).apply {
         this.player = player
@@ -317,7 +338,7 @@ fun CbzReader(
                     androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
             }
         } else {
-            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
                 val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, names[page]) }
                 bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) }
                     ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -366,20 +387,43 @@ fun CbzReader(
     }
 }
 
-private suspend fun loadCbzPage(file: File, entryName: String): Bitmap? = withContext(Dispatchers.IO) {
-    runCatching {
-        ZipFile(file).use { z ->
-            val entry = z.getEntry(entryName) ?: return@use null
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
-            var sample = 1
-            val longest = maxOf(bounds.outWidth, bounds.outHeight)
-            while (longest / (sample * 2) >= 1800) sample *= 2
-            val options = BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.RGB_565
+/** Cache halaman komik (di memori saja) supaya membalik halaman tidak mendekode ulang. Dikosongkan saat aplikasi terkunci. */
+object CbzCache {
+    private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
+    fun get(key: String): Bitmap? = cache.get(key)
+    fun put(key: String, bitmap: Bitmap) { cache.put(key, bitmap) }
+    fun clear() = cache.evictAll()
+}
+
+/** Satu ImageLoader bersama, dengan dukungan GIF animasi. */
+private object ViewerImages {
+    private var instance: coil.ImageLoader? = null
+    fun loader(ctx: android.content.Context): coil.ImageLoader = instance ?: coil.ImageLoader.Builder(ctx.applicationContext).components {
+        if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory()) else add(coil.decode.GifDecoder.Factory())
+    }.build().also { instance = it }
+}
+
+private suspend fun loadCbzPage(file: File, entryName: String): Bitmap? {
+    val key = file.absolutePath + "#" + entryName
+    val cachedPage = CbzCache.get(key)
+    if (cachedPage != null) return cachedPage
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            ZipFile(file).use { z ->
+                val entry = z.getEntry(entryName) ?: return@use null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                val longest = maxOf(bounds.outWidth, bounds.outHeight)
+                while (longest / (sample * 2) >= 1800) sample *= 2
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, options) }
             }
-            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, options) }
-        }
-    }.getOrNull()
+        }.getOrNull()?.also { CbzCache.put(key, it) }
+    }
 }

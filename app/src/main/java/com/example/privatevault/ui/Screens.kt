@@ -54,6 +54,7 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val setup = !pm.hasPin
+    val canBio = remember { androidx.biometric.BiometricManager.from(ctx).canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS }
     val title = when { !setup -> "Masukkan PIN"; first == null -> "Buat PIN baru (4 digit)"; else -> "Ulangi PIN" }
 
     fun bio() {
@@ -63,7 +64,7 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
         })
         p.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Buka Dhika App").setNegativeButtonText("Gunakan PIN").build())
     }
-    LaunchedEffect(Unit) { if (!setup && pm.biometric) bio() }
+    LaunchedEffect(Unit) { if (!setup && pm.biometric && canBio) bio() }
 
     fun press(k: String) {
         if (checking) return
@@ -75,9 +76,12 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
                 !setup -> {
                     checking = true
                     scope.launch {
-                        val valid = withContext(Dispatchers.IO) { pm.verify(entered) }
+                        val (valid, wait) = withContext(Dispatchers.IO) { val ok = pm.verify(entered); ok to pm.lockRemainingMs() }
                         checking = false
-                        if (valid) onUnlocked() else { error = "PIN salah, coba lagi"; pin = "" }
+                        if (valid) onUnlocked() else {
+                            error = if (wait > 0) "Terlalu banyak percobaan. Coba lagi dalam ${(wait + 999) / 1000} detik" else "PIN salah, coba lagi"
+                            pin = ""
+                        }
                     }
                 }
                 first == null -> { first = entered; pin = "" }
@@ -93,21 +97,21 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
             }
         }
     }
-    Column(Modifier.fillMaxSize().background(Bg).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Image(painterResource(R.drawable.logo_full_white), "Logo Dhika", Modifier.width(240.dp))
         Spacer(Modifier.height(8.dp)); Text("Dhika App", fontSize = 14.sp, color = Muted)
         Text(title, color = Muted)
         Row(Modifier.padding(vertical = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             repeat(4) { Box(Modifier.size(14.dp).clip(CircleShape).border(2.dp, Accent, CircleShape).background(if (it < pin.length) Accent else androidx.compose.ui.graphics.Color.Transparent)) }
         }
-        Text(error, color = androidx.compose.ui.graphics.Color(0xFFFF6B73), fontSize = 13.sp, modifier = Modifier.height(20.dp))
+        Text(error, color = androidx.compose.ui.graphics.Color(0xFFFF6B73), fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.heightIn(min = 36.dp))
         listOf("123", "456", "789", " 0⌫").forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 12.dp)) {
                 row.forEach { ch -> if (ch == ' ') Spacer(Modifier.size(64.dp)) else
                     Box(Modifier.size(64.dp).clip(CircleShape).background(Card).clickable { press(ch.toString()) }, contentAlignment = Alignment.Center) { Text(ch.toString(), fontSize = 22.sp) } }
             }
         }
-        if (!setup && pm.biometric) TextButton(onClick = ::bio) { Icon(Icons.Default.Fingerprint, null); Text(" Gunakan biometrik") }
+        if (!setup && pm.biometric && canBio) TextButton(onClick = ::bio) { Icon(Icons.Default.Fingerprint, null); Text(" Gunakan biometrik") }
     }
 }
 
@@ -115,15 +119,29 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
 @Composable
 fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
     val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
-    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Card2).combinedClickable(onClick = onClick, onLongClick = onLongClick), contentAlignment = Alignment.Center) {
-        bmp?.let { Image(it.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+    val image = remember(bmp) { bmp?.asImageBitmap() }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Card2)
+        .combinedClickable(onClick = onClick, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongClick() }),
+        contentAlignment = Alignment.Center) {
+        image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         if (bmp == null && f.type == MediaType.COMIC) Icon(Icons.Default.MenuBook, null, tint = Accent, modifier = Modifier.size(36.dp))
-        if (f.type == MediaType.VIDEO) Icon(Icons.Default.PlayCircle, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(34.dp))
+        if (f.type == MediaType.VIDEO) Icon(Icons.Default.PlayCircle, null, tint = Color.White, modifier = Modifier.size(34.dp))
+        if (selected == true) Box(Modifier.fillMaxSize().background(Color(0x552F7BFF)))
         if (selected != null) Box(Modifier.align(Alignment.TopStart).padding(6.dp).size(22.dp).clip(CircleShape)
-            .background(if (selected) Accent else androidx.compose.ui.graphics.Color(0x66000000)).border(2.dp, androidx.compose.ui.graphics.Color.White, CircleShape).clickable(onClick = onToggle),
-            contentAlignment = Alignment.Center) { if (selected) Icon(Icons.Default.Check, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(14.dp)) }
+            .background(if (selected) Accent else Color(0x66000000)).border(2.dp, Color.White, CircleShape).clickable(onClick = onToggle),
+            contentAlignment = Alignment.Center) { if (selected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
     }
 }
+
+/** Beri tahu pengguna hasil impor (berapa file masuk, berapa dilewati). */
+private fun toastImport(ctx: android.content.Context, r: VaultRepository.ImportResult) {
+    val msg = if (r.skipped == 0) "${r.imported} file diimpor"
+    else "${r.imported} file diimpor, ${r.skipped} dilewati (format tidak didukung atau gagal dibaca)"
+    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
+}
+
+private class HomeData(val media: List<VaultFile>, val folders: List<File>, val counts: Map<File, Int>)
 
 @Composable
 private fun FileInfoDialog(file: VaultFile, onDismiss: () -> Unit) {
@@ -158,13 +176,24 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true) {
-    val all = remember(version) { repo.allFiles() }
-    val folders = remember(version) { repo.folders() }
+    // Baca daftar file di thread IO (bukan di main thread); data lama tetap tampil selama memuat ulang.
+    val home by produceState<HomeData?>(null, version) {
+        value = withContext(Dispatchers.IO) {
+            val fs = repo.folders(); val everything = repo.allFiles()
+            HomeData(everything, fs, fs.associateWith { d -> everything.count { it.file.parentFile == d } })
+        }
+    }
+    val all = home?.media ?: emptyList()
+    val folders = home?.folders ?: emptyList()
+    val typeCounts = remember(all) { all.groupingBy { it.type }.eachCount() }
     var q by remember { mutableStateOf("") }
+    val shown = remember(all, q) { all.filter { it.name.contains(q, true) }.take(if (q.isBlank()) 16 else 60).chunked(4) }
+    var chooseDest by remember { mutableStateOf(false) }
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var target by remember { mutableStateOf<File?>(null) }
     val selectedFiles = remember { mutableStateListOf<VaultFile>() }
+    androidx.activity.compose.BackHandler(enabled = selectedFiles.isNotEmpty()) { selectedFiles.clear() }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
     var infoFile by remember { mutableStateOf<VaultFile?>(null) }
     var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
@@ -178,15 +207,23 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         val f = target ?: repo.folders().firstOrNull() ?: repo.rootFolder()
-        scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } }
+        if (uris.isNotEmpty()) scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); onChanged() } finally { importing = false } }
     }
+    fun launchPicker(dest: File) { target = dest; ExternalFlow.active = true; picker.launch(arrayOf("*/*")) }
     Scaffold(containerColor = Bg,
         topBar = { if (selectedFiles.isNotEmpty()) TopAppBar(title = { Text("${selectedFiles.size} dipilih") },
+            navigationIcon = { IconButton(onClick = { selectedFiles.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } },
             actions = {
                 IconButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
                 IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
-        floatingActionButton = { FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, null) } },
+        floatingActionButton = { FloatingActionButton(onClick = {
+            when (folders.size) {
+                0 -> { android.widget.Toast.makeText(ctx, "Buat folder dulu untuk menyimpan file", android.widget.Toast.LENGTH_SHORT).show(); newDialog = true }
+                1 -> launchPicker(folders[0])
+                else -> chooseDest = true
+            }
+        }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, "Tambah file") } },
         bottomBar = { if (showBottomNav) NavigationBar(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
                 .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
@@ -212,7 +249,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item {
                 Row(Modifier.fillMaxWidth().glassSurface(RoundedCornerShape(20.dp)).padding(vertical = 16.dp)) {
                     listOf("Foto" to MediaType.PHOTO, "Video" to MediaType.VIDEO, "Komik" to MediaType.COMIC).forEach { (n, t) ->
-                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { Text("${all.count { it.type == t }}", fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(n, color = Muted) }
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { Text("${typeCounts[t] ?: 0}", fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(n, color = Muted) }
                     }
                 }
             }
@@ -223,17 +260,17 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                         Text("Folder Saya", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                         Text("Akses cepat ke koleksi pribadi", color = Muted, fontSize = 11.sp)
                     }
-                    Text("${repo.folders().size} folder", color = Muted, fontSize = 11.sp)
+                    Text("${folders.size} folder", color = Muted, fontSize = 11.sp)
                 }
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(folders) { f ->
-                        Column(Modifier.width(92.dp).glassSurface(RoundedCornerShape(17.dp)).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1); Text("${repo.files(f).size} item", fontSize = 11.sp, color = Muted)
+                        Column(Modifier.width(104.dp).glassSurface(RoundedCornerShape(17.dp)).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text("${home?.counts?.get(f) ?: 0} item", fontSize = 11.sp, color = Muted)
                         }
                     }
-                    item { Column(Modifier.width(92.dp).glassSurface(RoundedCornerShape(17.dp)).clickable { newDialog = true }.padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Add, null, modifier = Modifier.size(34.dp)); Text("Folder Baru", fontSize = 12.sp) } }
+                    item { Column(Modifier.width(104.dp).glassSurface(RoundedCornerShape(17.dp)).clickable { newDialog = true }.padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Add, null, modifier = Modifier.size(34.dp)); Text("Folder Baru", fontSize = 12.sp) } }
                 }
             }
             item {
@@ -242,15 +279,22 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                     Text("Lanjutkan membuka foto, video, dan komik", color = Muted, fontSize = 11.sp)
                 }
             }
-            if (importing) item { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, modifier = Modifier.fillMaxWidth(), color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
-            items(all.filter { it.name.contains(q, true) }.take(16).chunked(4)) { row ->
+            if (home != null && shown.isEmpty()) item {
+                Text(if (q.isBlank()) "Brankas masih kosong.\nTekan + untuk menambah foto, video, atau komik." else "Tidak ada file yang cocok dengan “$q”.",
+                    color = Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp))
+            }
+            items(shown) { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = if (selectedFiles.isNotEmpty()) selectedFiles.contains(file) else null, onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
     if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
-    if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { repo.createFolder(n); onChanged() } }
+    if (chooseDest) AlertDialog(onDismissRequest = { chooseDest = false }, title = { Text("Simpan ke folder") }, confirmButton = {},
+        dismissButton = { TextButton({ chooseDest = false }) { Text("Batal") } },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) { folders.forEach { d ->
+            TextButton({ chooseDest = false; launchPicker(d) }, Modifier.fillMaxWidth()) { Text(d.name, maxLines = 1, modifier = Modifier.fillMaxWidth()) } } } })
+    if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { if (repo.createFolder(n)) onChanged() else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
     deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
@@ -280,9 +324,11 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack, clipboard: List<VaultFile> = emptyList(), onClipboardChange: (List<VaultFile>) -> Unit = {}, showBottomNav: Boolean = true) {
     var tab by remember { mutableStateOf(MediaType.PHOTO) }
     val sel = remember { mutableStateListOf<VaultFile>() }
+    androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     val items = remember(version, tab, rootFiles, folder) { (if (rootFiles) repo.rootFiles().filter { it.type == MediaType.PHOTO } else if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
@@ -294,10 +340,12 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var actionFolder by remember { mutableStateOf(false) }
     var infoFolder by remember { mutableStateOf(false) }
     var deleteFolder by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; destination?.let { f -> scope.launch { importing = true; try { withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; onChanged() } finally { importing = false } } } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; if (uris.isNotEmpty()) destination?.let { f -> scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
-        topBar = { TopAppBar(title = { Text(if (rootFiles) "Gambar di Luar Folder" else folder?.name ?: "Favorit") }, navigationIcon = { if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
+        topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Gambar di Luar Folder" else folder?.name ?: "Favorit") },
+            navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
+                if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
                 if ((folder == null || rootFiles) && sel.isNotEmpty()) {
                     IconButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
@@ -309,7 +357,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
                     } }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
-        floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, null) } },
+        floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ ExternalFlow.active = true; picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, "Tambah file") } },
         bottomBar = {
             if (showBottomNav && (folder == null || rootFiles)) NavigationBar(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
@@ -349,7 +397,6 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         }) { pad ->
         Column(Modifier.padding(pad)) {
             if (!rootFiles) TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
-            if (importing) Column(Modifier.fillMaxWidth().padding(12.dp)) { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, color = Accent); Text("Mengimpor $importDone / $importTotal • $importName", color = Muted, fontSize = 12.sp) }
             if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
             LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
@@ -368,7 +415,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     }
     if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
-    if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { repo.renameFolder(folder, n); onChanged(); onBack() } }
+    if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { if (repo.renameFolder(folder, n)) { onChanged(); onBack() } else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},
         text = { Column { repo.folders().filter { it != folder }.forEach { d -> TextButton({
             val selected = sel.toList()
@@ -391,7 +438,7 @@ fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
     var pinDlg by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Pengaturan") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
-        Column(Modifier.padding(pad).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Keamanan", color = Muted, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { pinDlg = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Lock, null, tint = Accent); Text("  Ubah PIN", Modifier.weight(1f)); Icon(Icons.Default.ChevronRight, null, tint = Muted)
@@ -409,7 +456,7 @@ fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
             Text("File", color = Muted, fontWeight = FontWeight.SemiBold)
             Text("Semua file & thumbnail dienkripsi AES-256 di penyimpanan privat aplikasi.", color = Muted, fontSize = 13.sp)
             Text("Tentang", color = Muted, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) { Text("Versi Aplikasi", Modifier.weight(1f)); Text("1.0.0", color = Muted) }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) { Text("Versi Aplikasi", Modifier.weight(1f)); Text(runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "-", color = Muted) }
         }
     }
     if (pinDlg) {

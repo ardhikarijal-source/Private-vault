@@ -44,8 +44,13 @@ class MainActivity : FragmentActivity() {
                 DisposableEffect(owner) {
                     val o = LifecycleEventObserver { _, e ->
                         if (e == Lifecycle.Event.ON_STOP) stopAt = System.currentTimeMillis()
-                        if (e == Lifecycle.Event.ON_START && stopAt > 0 && System.currentTimeMillis() - stopAt >= pm.autoLockMs) {
-                            locked = true; screen = Screen.Home; repo.clearCache()
+                        if (e == Lifecycle.Event.ON_START) {
+                            // Kembali dari pemilih file bukan alasan untuk mengunci (jika tidak, impor ikut batal).
+                            val external = ExternalFlow.active; ExternalFlow.active = false
+                            if (!external && stopAt > 0 && System.currentTimeMillis() - stopAt >= pm.autoLockMs) {
+                                locked = true; screen = Screen.Home; repo.clearCache(); CbzCache.clear()
+                            }
+                            stopAt = 0L
                         }
                     }
                     owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }

@@ -25,8 +25,8 @@ enum class MediaType { PHOTO, VIDEO, COMIC }
 data class VaultFile(val file: File) {
     val name: String get() = file.name
     val type: MediaType? get() = when (file.extension.lowercase()) {
-        "jpg", "jpeg", "png", "webp" -> MediaType.PHOTO
-        "mp4" -> MediaType.VIDEO
+        "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif" -> MediaType.PHOTO
+        "mp4", "m4v", "mov", "webm", "mkv", "3gp" -> MediaType.VIDEO
         "cbz" -> MediaType.COMIC
         else -> null
     }
@@ -44,7 +44,7 @@ class VaultRepository(private val ctx: Context) {
     private val trashPrefs = ctx.getSharedPreferences("vault_trash", Context.MODE_PRIVATE)
     private val prefs = ctx.getSharedPreferences("vault_meta", Context.MODE_PRIVATE)
     private val master by lazy { MasterKey.Builder(ctx).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build() }
-    private val thumbMem = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    private val thumbMem = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
 
@@ -55,7 +55,7 @@ class VaultRepository(private val ctx: Context) {
 
     /* ---- folder ---- */
     fun rootFolder(): File = root
-    fun rootFiles(): List<VaultFile> = root.listFiles { f -> f.isFile }?.map(::VaultFile)?.filter { it.type != null }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
+    fun rootFiles(): List<VaultFile> = listMedia(root)
     fun folders(): List<File> = root.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }?.sortedBy { it.name.lowercase() } ?: emptyList()
     private fun safeFolderName(name: String): String? {
         val cleaned = name.trim().replace(Regex("[/\\\\]"), "_")
@@ -68,7 +68,18 @@ class VaultRepository(private val ctx: Context) {
     fun renameFolder(f: File, name: String): Boolean {
         val safe = safeFolderName(name) ?: return false
         if (f.parentFile != root || !f.isDirectory || safe == f.name) return false
-        return f.renameTo(File(root, safe))
+        val target = File(root, safe)
+        if (target.exists()) return false
+        val oldPrefix = f.absolutePath + File.separator
+        if (!f.renameTo(target)) return false
+        // Favorit disimpan berdasarkan path, jadi harus ikut diperbarui ke nama folder baru.
+        val favs = prefs.getStringSet("fav", emptySet())!!
+        if (favs.any { it.startsWith(oldPrefix) }) {
+            val updated = favs.map { if (it.startsWith(oldPrefix)) target.absolutePath + File.separator + it.removePrefix(oldPrefix) else it }.toSet()
+            prefs.edit { putStringSet("fav", updated) }
+        }
+        thumbMem.evictAll()
+        return true
     }
     fun deleteFolder(f: File): Boolean {
         if (f.parentFile != root || !f.isDirectory || f.name == ".trash") return false
@@ -77,9 +88,17 @@ class VaultRepository(private val ctx: Context) {
     }
 
     /* ---- file ---- */
-    fun files(folder: File): List<VaultFile> =
-        folder.listFiles { f -> f.isFile }?.map(::VaultFile)?.filter { it.type != null }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
-    fun allFiles(): List<VaultFile> = (rootFiles() + folders().flatMap { files(it) }).sortedByDescending { it.file.lastModified() }
+    fun files(folder: File): List<VaultFile> = listMedia(folder)
+    fun allFiles(): List<VaultFile> =
+        (rootFiles() + folders().flatMap { files(it) })
+            .map { it to it.file.lastModified() }.sortedByDescending { it.second }.map { it.first }
+
+    /** Daftar file media terbaru di atas. lastModified() hanya dibaca sekali per file (bukan tiap perbandingan sort). */
+    private fun listMedia(dir: File): List<VaultFile> {
+        val list = dir.listFiles { f -> f.isFile } ?: return emptyList()
+        return list.map { VaultFile(it) }.filter { it.type != null }
+            .map { it to it.file.lastModified() }.sortedByDescending { it.second }.map { it.first }
+    }
 
     /** Enkripsi file plain ke folder tujuan + buat thumbnail terenkripsi. */
     private fun store(plain: File, folder: File, name: String): File {
@@ -92,8 +111,10 @@ class VaultRepository(private val ctx: Context) {
         return dest
     }
 
-    fun import(folder: File, uris: List<Uri>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): Int {
-        var n = 0
+    data class ImportResult(val imported: Int, val skipped: Int)
+
+    fun import(folder: File, uris: List<Uri>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ImportResult {
+        var n = 0; var skipped = 0
         uris.forEachIndexed { index, uri ->
             onProgress(index, uris.size, "Menyiapkan file ${index + 1} dari ${uris.size}")
             val name = runCatching {
@@ -106,18 +127,19 @@ class VaultRepository(private val ctx: Context) {
             }.getOrNull()?.takeIf { it.isNotBlank() }
                 ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.contains('.') }
                 ?: "file_${System.currentTimeMillis()}"
-            if (VaultFile(File(name)).type == null) return@forEachIndexed
+            if (VaultFile(File(name)).type == null) { skipped++; return@forEachIndexed }
             val tmp = File(cache, "imp_${System.nanoTime()}.${name.substringAfterLast('.')}")
             try {
-                val input = ctx.contentResolver.openInputStream(uri) ?: return@forEachIndexed
+                val input = ctx.contentResolver.openInputStream(uri)
+                if (input == null) { skipped++; return@forEachIndexed }
                 input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
                 store(tmp, folder, name); n++
             } catch (_: Exception) {
-                // Lewati file yang gagal dibaca; lanjutkan impor berikutnya.
+                skipped++ // Lewati file yang gagal dibaca; lanjutkan impor berikutnya.
             } finally { tmp.delete() }
             onProgress(index + 1, uris.size, "Memproses $name")
         }
-        return n
+        return ImportResult(n, skipped)
     }
     fun move(f: VaultFile, to: File): Boolean {
         if (!to.isDirectory || to == f.file.parentFile) return false
@@ -172,8 +194,7 @@ class VaultRepository(private val ctx: Context) {
         val thumbnail = File(trashDir, item.file.name + ".thumb")
         val fromSavedThumb = runCatching {
             if (!thumbnail.isFile) null else {
-                val bytes = enc(thumbnail).openFileInput().use { it.readBytes() }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                decodeThumb(enc(thumbnail).openFileInput().use { it.readBytes() })
             }
         }.getOrNull()
         if (fromSavedThumb != null) return fromSavedThumb
@@ -238,10 +259,46 @@ class VaultRepository(private val ctx: Context) {
     }
     fun clearCache() { cache.listFiles()?.forEach { it.delete() }; thumbMem.evictAll() }
 
-    fun thumb(f: VaultFile): Bitmap? = thumbMem.get(f.file.absolutePath) ?: runCatching {
-        val bytes = enc(thumbFile(f.file)).openFileInput().use { it.readBytes() }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { thumbMem.put(f.file.absolutePath, it) }
-    }.getOrNull()
+    fun thumb(f: VaultFile): Bitmap? {
+        val cached = thumbMem.get(f.file.absolutePath)
+        if (cached != null) return cached
+        val tf = thumbFile(f.file)
+        if (!tf.isFile) return null // tidak ada thumbnail: lewati tanpa inisialisasi enkripsi
+        return runCatching { decodeThumb(enc(tf).openFileInput().use { it.readBytes() }) }.getOrNull()
+            ?.also { thumbMem.put(f.file.absolutePath, it) }
+    }
+
+    private fun decodeThumb(bytes: ByteArray): Bitmap? = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+        BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 })
+
+    private fun scaleDown(src: Bitmap, max: Int = 512): Bitmap {
+        val longest = maxOf(src.width, src.height)
+        if (longest <= max) return src
+        val r = max.toFloat() / longest
+        val out = Bitmap.createScaledBitmap(src, (src.width * r).toInt().coerceAtLeast(1), (src.height * r).toInt().coerceAtLeast(1), true)
+        if (out !== src) src.recycle()
+        return out
+    }
+
+    /** Putar thumbnail sesuai orientasi EXIF supaya foto portrait tidak miring. */
+    @Suppress("DEPRECATION")
+    private fun applyExif(bmp: Bitmap, path: String): Bitmap {
+        val orientation = runCatching {
+            android.media.ExifInterface(path).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)
+        }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
+        val m = android.graphics.Matrix()
+        when (orientation) {
+            2 -> m.postScale(-1f, 1f)
+            3 -> m.postRotate(180f)
+            4 -> m.postScale(1f, -1f)
+            5 -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+            6 -> m.postRotate(90f)
+            7 -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+            8 -> m.postRotate(270f)
+            else -> return bmp
+        }
+        return runCatching { Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true) }.getOrDefault(bmp)
+    }
 
     private fun sampled(open: () -> InputStream?): Bitmap? {
         val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -257,8 +314,13 @@ class VaultRepository(private val ctx: Context) {
         }
     }
     private fun makeThumb(plain: File): Bitmap? = when (VaultFile(plain).type) {
-        MediaType.PHOTO -> sampled { plain.inputStream() }
-        MediaType.VIDEO -> MediaMetadataRetriever().run { try { setDataSource(plain.path); getFrameAtTime(0) } finally { release() } }
+        MediaType.PHOTO -> sampled { plain.inputStream() }?.let { applyExif(it, plain.path) }
+        MediaType.VIDEO -> MediaMetadataRetriever().run {
+            try {
+                setDataSource(plain.path)
+                (getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: getFrameAtTime(0))?.let { scaleDown(it) }
+            } finally { release() }
+        }
         MediaType.COMIC -> ZipFile(plain).use { z ->
             val e = z.entries().asSequence().filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }.minByOrNull { it.name.lowercase() }
             e?.let { sampled { z.getInputStream(it) } } }
@@ -271,7 +333,10 @@ class VaultRepository(private val ctx: Context) {
         val s = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
         if (on) s.add(f.file.absolutePath) else s.remove(f.file.absolutePath); putStringSet("fav", s)
     }
-    fun favorites() = allFiles().filter(::isFav)
+    fun favorites(): List<VaultFile> {
+        val favs = prefs.getStringSet("fav", emptySet())!!
+        return allFiles().filter { it.file.absolutePath in favs }
+    }
 
     private fun unique(dir: File, name: String): File {
         var f = File(dir, name); var i = 1
@@ -288,6 +353,8 @@ class PinManager(ctx: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
 
     val hasPin get() = prefs.contains("hash")
+    /** Sisa waktu (ms) PIN masih dikunci akibat terlalu banyak percobaan salah. */
+    fun lockRemainingMs(): Long = (prefs.getLong("pin_lock_until", 0L) - System.currentTimeMillis()).coerceAtLeast(0L)
     var biometric: Boolean
         get() = prefs.getBoolean("bio", true)
         set(v) = prefs.edit { putBoolean("bio", v) }
@@ -310,12 +377,16 @@ class PinManager(ctx: Context) {
         val salt = Base64.decode(prefs.getString("salt", "") ?: return false, 0)
         val valid = MessageDigest.isEqual(hash(pin, salt).toByteArray(), (prefs.getString("hash", "") ?: "").toByteArray())
         if (valid) {
-            prefs.edit { remove("pin_failures"); remove("pin_lock_until") }
+            prefs.edit { remove("pin_failures"); remove("pin_lock_until"); remove("pin_rounds") }
         } else {
             val failures = prefs.getInt("pin_failures", 0) + 1
             prefs.edit {
                 if (failures >= 5) {
-                    putLong("pin_lock_until", now + 30_000L)
+                    // Jeda makin lama tiap putaran gagal: 30 dtk, 1 mnt, 2 mnt, ... maksimal 1 jam.
+                    val rounds = prefs.getInt("pin_rounds", 0) + 1
+                    val wait = (30_000L shl (rounds - 1).coerceAtMost(7)).coerceAtMost(3_600_000L)
+                    putLong("pin_lock_until", now + wait)
+                    putInt("pin_rounds", rounds)
                     putInt("pin_failures", 0)
                 } else putInt("pin_failures", failures)
             }
