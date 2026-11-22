@@ -8,6 +8,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.*
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -116,17 +124,119 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
 }
 
 /* ---------- THUMBNAIL (didekripsi dari thumbnail terenkripsi) ---------- */
+/** Mengingat tab terakhir yang dibuka per folder, supaya tidak kembali ke "Foto" setelah menutup viewer. */
+private object TabMemory {
+    private val map = mutableMapOf<String, MediaType>()
+    fun get(key: String): MediaType = map[key] ?: MediaType.PHOTO
+    fun set(key: String, type: MediaType) { map[key] = type }
+}
+
+/** Klik dengan efek "membal": item mengecil sedikit saat ditekan lalu kembali dengan pegas. */
+private fun Modifier.bouncyClick(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, pressedScale: Float = 0.95f): Modifier = composed {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) pressedScale else 1f, spring(dampingRatio = 0.55f, stiffness = 450f))
+    this.graphicsLayer { scaleX = s; scaleY = s }
+        .combinedClickable(interactionSource = source, indication = null, onClick = onClick, onLongClick = onLongClick)
+}
+
+/** true saat pengguna menggulir ke atas (atau di posisi awal): dipakai untuk melipat tombol Tambah. */
+@Composable
+private fun LazyGridState.isScrollingUp(): Boolean {
+    var prevIndex by remember(this) { mutableIntStateOf(firstVisibleItemIndex) }
+    var prevOffset by remember(this) { mutableIntStateOf(firstVisibleItemScrollOffset) }
+    return remember(this) {
+        derivedStateOf {
+            val up = if (prevIndex != firstVisibleItemIndex) prevIndex > firstVisibleItemIndex else prevOffset >= firstVisibleItemScrollOffset
+            prevIndex = firstVisibleItemIndex; prevOffset = firstVisibleItemScrollOffset
+            up
+        }
+    }.value
+}
+
+@Composable
+private fun androidx.compose.foundation.lazy.LazyListState.isScrollingUp(): Boolean {
+    var prevIndex by remember(this) { mutableIntStateOf(firstVisibleItemIndex) }
+    var prevOffset by remember(this) { mutableIntStateOf(firstVisibleItemScrollOffset) }
+    return remember(this) {
+        derivedStateOf {
+            val up = if (prevIndex != firstVisibleItemIndex) prevIndex > firstVisibleItemIndex else prevOffset >= firstVisibleItemScrollOffset
+            prevIndex = firstVisibleItemIndex; prevOffset = firstVisibleItemScrollOffset
+            up
+        }
+    }.value
+}
+
+private fun greetingNow(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+    in 4..10 -> "Selamat pagi"
+    in 11..14 -> "Selamat siang"
+    in 15..17 -> "Selamat sore"
+    else -> "Selamat malam"
+}
+
+/** Pemilih jenis media (Foto / Video / Komik) berbentuk pil, lengkap dengan jumlah file. */
+@Composable
+private fun MediaTabs(selected: MediaType, counts: Map<MediaType?, Int>, onSelect: (MediaType) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).glassSurface(RoundedCornerShape(18.dp)).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf(Triple("Foto", MediaType.PHOTO, Icons.Default.Image), Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle), Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook))
+            .forEach { (label, type, icon) ->
+                val active = selected == type
+                val bg by androidx.compose.animation.animateColorAsState(if (active) Accent else Color.Transparent)
+                Row(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(bg).clickable { onSelect(type) }.padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(icon, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("$label ${counts[type] ?: 0}", color = if (active) Color.White else Muted, fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+                }
+            }
+    }
+}
+
+@Composable
+private fun EmptyState(type: MediaType, hint: String) {
+    val (icon, label) = when (type) {
+        MediaType.PHOTO -> Icons.Default.Image to "foto"
+        MediaType.VIDEO -> Icons.Default.PlayCircle to "video"
+        MediaType.COMIC -> Icons.Default.MenuBook to "komik"
+    }
+    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(Modifier.size(84.dp).clip(CircleShape).background(Card2), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = Accent, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Belum ada $label", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(hint, color = Muted, fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+@Composable
+private fun FolderCover(repo: VaultRepository, file: VaultFile) {
+    val bmp by produceState<android.graphics.Bitmap?>(null, file.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(file) } }
+    val image = remember(bmp) { bmp?.asImageBitmap() }
+    if (image != null) Image(image, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    else Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(38.dp))
+}
+
 @Composable
 fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
     val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
     val image = remember(bmp) { bmp?.asImageBitmap() }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Card2)
-        .combinedClickable(onClick = onClick, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongClick() }),
+    // Item yang dipilih sedikit mengecil (efek pegas) supaya status pilihan terasa jelas.
+    val shrink by animateFloatAsState(if (selected == true) 0.88f else 1f, spring(dampingRatio = 0.7f, stiffness = 400f))
+    Box(modifier.aspectRatio(1f).graphicsLayer { scaleX = shrink; scaleY = shrink }.clip(RoundedCornerShape(14.dp)).background(Card2)
+        .bouncyClick(onClick = onClick, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongClick() }),
         contentAlignment = Alignment.Center) {
         image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         if (bmp == null && f.type == MediaType.COMIC) Icon(Icons.Default.MenuBook, null, tint = Accent, modifier = Modifier.size(36.dp))
-        if (f.type == MediaType.VIDEO) Icon(Icons.Default.PlayCircle, null, tint = Color.White, modifier = Modifier.size(34.dp))
+        if (f.type == MediaType.VIDEO) Box(Modifier.size(36.dp).clip(CircleShape).background(Color(0x77000000)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(22.dp))
+        }
+        if (f.type == MediaType.COMIC) Text("CBZ", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
         if (selected == true) Box(Modifier.fillMaxSize().background(Color(0x552F7BFF)))
         if (selected != null) Box(Modifier.align(Alignment.TopStart).padding(6.dp).size(22.dp).clip(CircleShape)
             .background(if (selected) Accent else Color(0x66000000)).border(2.dp, Color.White, CircleShape).clickable(onClick = onToggle),
@@ -141,7 +251,7 @@ private fun toastImport(ctx: android.content.Context, r: VaultRepository.ImportR
     android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
 }
 
-private class HomeData(val media: List<VaultFile>, val folders: List<File>, val counts: Map<File, Int>)
+private class HomeData(val media: List<VaultFile>, val folders: List<File>, val counts: Map<File, Int>, val covers: Map<File, VaultFile?>)
 
 @Composable
 private fun FileInfoDialog(file: VaultFile, onDismiss: () -> Unit) {
@@ -180,7 +290,10 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val home by produceState<HomeData?>(null, version) {
         value = withContext(Dispatchers.IO) {
             val fs = repo.folders(); val everything = repo.allFiles()
-            HomeData(everything, fs, fs.associateWith { d -> everything.count { it.file.parentFile == d } })
+            val byFolder = everything.groupBy { it.file.parentFile }
+            HomeData(everything, fs,
+                fs.associateWith { d -> byFolder[d]?.size ?: 0 },
+                fs.associateWith { d -> byFolder[d]?.firstOrNull { it.type != MediaType.COMIC } ?: byFolder[d]?.firstOrNull() })
         }
     }
     val all = home?.media ?: emptyList()
@@ -217,13 +330,14 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 IconButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
                 IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
-        floatingActionButton = { FloatingActionButton(onClick = {
+        floatingActionButton = { ExtendedFloatingActionButton(onClick = {
             when (folders.size) {
                 0 -> { android.widget.Toast.makeText(ctx, "Buat folder dulu untuk menyimpan file", android.widget.Toast.LENGTH_SHORT).show(); newDialog = true }
                 1 -> launchPicker(folders[0])
                 else -> chooseDest = true
             }
-        }, containerColor = Accent, shape = CircleShape) { Icon(Icons.Default.Add, "Tambah file") } },
+        }, expanded = listState.isScrollingUp(), containerColor = Accent, contentColor = Color.White,
+            icon = { Icon(Icons.Default.Add, null) }, text = { Text("Tambah") }) },
         bottomBar = { if (showBottomNav) NavigationBar(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
                 .border(1.dp, Color(0x665F79A8), RoundedCornerShape(26.dp)),
@@ -235,11 +349,11 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
             }
         }) { pad ->
-        LazyColumn(state = listState, modifier = Modifier.padding(pad).background(Brush.verticalGradient(listOf(Color(0xFF0B1426), Bg, Color(0xFF080E19)))).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.padding(pad).background(Brush.verticalGradient(listOf(Color(0xFF10234A), Bg, Color(0xFF080E19)))).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Row(Modifier.padding(top = 18.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("RUANG PRIBADI", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        Text(remember { greetingNow() }.uppercase(), color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         Text("Dhika App", fontSize = 25.sp, fontWeight = FontWeight.Bold)
                         Text("Semua file aman, dalam satu tempat", color = Muted, fontSize = 12.sp)
                     }
@@ -247,13 +361,23 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 }
             }
             item {
-                Row(Modifier.fillMaxWidth().glassSurface(RoundedCornerShape(20.dp)).padding(vertical = 16.dp)) {
-                    listOf("Foto" to MediaType.PHOTO, "Video" to MediaType.VIDEO, "Komik" to MediaType.COMIC).forEach { (n, t) ->
-                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { Text("${typeCounts[t] ?: 0}", fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(n, color = Muted) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(Triple("Foto", MediaType.PHOTO, Icons.Default.Image), Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle), Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook)).forEach { (n, t, icon) ->
+                        // Angka naik perlahan saat data selesai dimuat.
+                        val animated by animateIntAsState(typeCounts[t] ?: 0, tween(700))
+                        Column(Modifier.weight(1f).glassSurface(RoundedCornerShape(18.dp)).padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0x332F7BFF)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Accent, modifier = Modifier.size(19.dp)) }
+                            Spacer(Modifier.height(8.dp))
+                            Text("$animated", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text(n, color = Muted, fontSize = 12.sp)
+                        }
                     }
                 }
             }
-            item { OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Cari file…") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp)) }
+            item { OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Cari file…") }, leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Default.Close, "Hapus pencarian") } },
+                singleLine = true, shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, unfocusedBorderColor = Line, focusedContainerColor = Card, unfocusedContainerColor = Card)) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -265,12 +389,29 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(folders) { f ->
-                        Column(Modifier.width(104.dp).glassSurface(RoundedCornerShape(17.dp)).combinedClickable(onClick = { onFolder(f) }, onLongClick = { actionFolder = f }).padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(34.dp)); Text(f.name, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text("${home?.counts?.get(f) ?: 0} item", fontSize = 11.sp, color = Muted)
+                    items(folders, key = { it.absolutePath }) { f ->
+                        val cover = home?.covers?.get(f)
+                        Column(Modifier.width(124.dp).glassSurface(RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp))
+                            .bouncyClick(onClick = { onFolder(f) }, onLongClick = { actionFolder = f })) {
+                            Box(Modifier.fillMaxWidth().height(86.dp).background(Brush.linearGradient(listOf(Color(0xFF1B2D57), Color(0xFF0F1A33)))), contentAlignment = Alignment.Center) {
+                                if (cover != null) FolderCover(repo, cover) else Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(38.dp))
+                                Text("${home?.counts?.get(f) ?: 0}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).background(Color(0x99000000), RoundedCornerShape(10.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
+                            }
+                            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                Text(f.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                Text("${home?.counts?.get(f) ?: 0} item", fontSize = 11.sp, color = Muted)
+                            }
                         }
                     }
-                    item { Column(Modifier.width(104.dp).glassSurface(RoundedCornerShape(17.dp)).clickable { newDialog = true }.padding(12.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Add, null, modifier = Modifier.size(34.dp)); Text("Folder Baru", fontSize = 12.sp) } }
+                    item {
+                        Column(Modifier.width(124.dp).height(136.dp).clip(RoundedCornerShape(18.dp)).border(1.dp, Color(0x665F79A8), RoundedCornerShape(18.dp))
+                            .bouncyClick(onClick = { newDialog = true }), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Box(Modifier.size(42.dp).clip(CircleShape).background(Color(0x332F7BFF)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, null, tint = Accent) }
+                            Spacer(Modifier.height(8.dp))
+                            Text("Folder Baru", fontSize = 12.sp, color = Muted)
+                        }
+                    }
                 }
             }
             item {
@@ -322,11 +463,21 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () -> Unit, onFile: (VaultFile, List<VaultFile>, Int, Int) -> Unit, onChanged: () -> Unit, initialScrollIndex: Int = 0, initialScrollOffset: Int = 0, rootFiles: Boolean = false, onHome: () -> Unit = onBack, onRootFiles: () -> Unit = onBack, onFav: () -> Unit = onBack, onSettings: () -> Unit = onBack, clipboard: List<VaultFile> = emptyList(), onClipboardChange: (List<VaultFile>) -> Unit = {}, showBottomNav: Boolean = true) {
-    var tab by remember { mutableStateOf(MediaType.PHOTO) }
+    val tabKey = if (rootFiles) "root" else folder?.absolutePath ?: "fav"
+    var tab by remember { mutableStateOf(TabMemory.get(tabKey)) }
     val sel = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
-    val items = remember(version, tab, rootFiles, folder) { (if (rootFiles) repo.rootFiles().filter { it.type == MediaType.PHOTO } else if (folder == null) repo.favorites() else repo.files(folder)).filter { it.type == tab } }
+    // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
+    val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
+    val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() }
+    val items = remember(source, tab) { source.filter { it.type == tab } }
+    // Bila tab aktif kosong tetapi tab lain berisi, pindah otomatis supaya file yang baru diunggah langsung terlihat.
+    LaunchedEffect(source) {
+        if ((tabCounts[tab] ?: 0) == 0) {
+            listOf(MediaType.PHOTO, MediaType.VIDEO, MediaType.COMIC).firstOrNull { (tabCounts[it] ?: 0) > 0 }?.let { tab = it; TabMemory.set(tabKey, it) }
+        }
+    }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -342,11 +493,12 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var deleteFolder by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; if (uris.isNotEmpty()) destination?.let { f -> scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
-        topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Gambar di Luar Folder" else folder?.name ?: "Favorit") },
+        topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Di Luar Folder" else folder?.name ?: "Favorit") },
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
                 if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
                 if ((folder == null || rootFiles) && sel.isNotEmpty()) {
+                    IconButton(onClick = { moveDlg = true }) { Icon(Icons.Default.DriveFileMove, "Pindahkan ke folder") }
                     IconButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
                 }
@@ -357,7 +509,10 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
                     } }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
-        floatingActionButton = { if (folder != null || rootFiles) FloatingActionButton({ ExternalFlow.active = true; picker.launch(arrayOf("*/*")) }, containerColor = Accent) { Icon(Icons.Default.Add, "Tambah file") } },
+        floatingActionButton = { if (folder != null || rootFiles) ExtendedFloatingActionButton(
+            onClick = { ExternalFlow.active = true; picker.launch(arrayOf("*/*")) },
+            expanded = gridState.isScrollingUp() || items.size < 12, containerColor = Accent, contentColor = Color.White,
+            icon = { Icon(Icons.Default.Add, null) }, text = { Text("Tambah") }) },
         bottomBar = {
             if (showBottomNav && (folder == null || rootFiles)) NavigationBar(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).clip(RoundedCornerShape(26.dp))
@@ -396,9 +551,9 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
         }) { pad ->
         Column(Modifier.padding(pad)) {
-            if (!rootFiles) TabRow(tab.ordinal, containerColor = Bg) { listOf("Foto", "Video", "Komik").forEachIndexed { i, n -> Tab(tab.ordinal == i, { tab = MediaType.values()[i]; sel.clear() }) { Text(n, Modifier.padding(12.dp)) } } }
-            if (items.isEmpty() && !importing) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Belum ada file di sini.\nTekan + untuk menambah.", color = Muted) }
-            LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
+            if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
+            LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
                     Thumb(repo, f,
                         selected = if (sel.isNotEmpty()) sel.contains(f) else null,

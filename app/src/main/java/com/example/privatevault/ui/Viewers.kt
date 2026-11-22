@@ -34,6 +34,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -110,34 +111,41 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                 }
             }
         }
-        if (controlsVisible) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
-                    .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
-            ) { Icon(Icons.Default.ArrowBack, "Kembali", tint = Color.White) }
-            Row(
-                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
-                    .background(Color(0xCC111827), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = {
-                    favorite = !favorite
-                    repo.setFav(current, favorite)
-                    onChanged()
-                }) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorit", tint = if (favorite) Color(0xFFFF6685) else Color.White) }
-                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Hapus", tint = Color.White) }
-                IconButton(onClick = { infoVisible = true }) { Icon(Icons.Default.Info, "Informasi", tint = Color.White) }
+        androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
+            enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Box(Modifier.fillMaxSize()) {
+                // Bayangan tipis di atas supaya tombol tetap terbaca di atas foto terang.
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(120.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent))))
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
+                ) { Icon(Icons.Default.ArrowBack, "Kembali", tint = Color.White) }
+                Row(
+                    Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                        .background(Color(0xCC111827), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        favorite = !favorite
+                        repo.setFav(current, favorite)
+                        onChanged()
+                    }) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorit", tint = if (favorite) Color(0xFFFF6685) else Color.White) }
+                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Hapus", tint = Color.White) }
+                    IconButton(onClick = { infoVisible = true }) { Icon(Icons.Default.Info, "Informasi", tint = Color.White) }
+                }
+                // Penghitung file dipindah ke pojok kanan atas agar tidak menabrak slider halaman komik di bawah.
+                if (safeFiles.size > 1) Text(
+                    "${pager.currentPage + 1} / ${safeFiles.size}",
+                    Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 14.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    color = Color.White, fontSize = 12.sp
+                )
             }
-            Text(
-                "${pager.currentPage + 1} / ${safeFiles.size}",
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)
-                    .background(Color(0xAA101827), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
-                color = Color.White
-            )
         }
     }
 }
@@ -314,7 +322,7 @@ fun CbzReader(
                 }
             }
             if (controlsVisible) Canvas(
-                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(18.dp)
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(top = 130.dp, bottom = 96.dp).width(28.dp)
                     .pointerInput(names.size) {
                         detectDragGestures(
                             onDragStart = { p ->
@@ -344,9 +352,10 @@ fun CbzReader(
                     ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             }
         }
-        if (controlsVisible) {
+        androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
+            enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) { Box(Modifier.fillMaxSize()) {
             Row(
-                Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 10.dp else 76.dp)
                     .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
                     .padding(horizontal = 8.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -383,7 +392,7 @@ fun CbzReader(
                     else scope.launch { pager.animateScrollToPage((currentIndex + 1).coerceAtMost(names.lastIndex)) }
                 }, enabled = currentIndex < names.lastIndex) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
             }
-        }
+        } }
     }
 }
 
