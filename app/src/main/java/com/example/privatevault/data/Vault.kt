@@ -445,6 +445,7 @@ class VaultRepository(private val ctx: Context) {
                         val dest = store(tmp, folder, name)
                         if (modified > 0) dest.setLastModified(modified)
                         if (fav) newFavs.add(dest.absolutePath)
+                        Unit
                     }.isSuccess
                     if (ok) restored++ else skipped++
                 } else skipped++
