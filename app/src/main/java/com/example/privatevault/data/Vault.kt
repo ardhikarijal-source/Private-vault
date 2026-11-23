@@ -285,19 +285,20 @@ class VaultRepository(private val ctx: Context) {
         trashPrefs.edit { remove(item.file.name) }
     }
 
-    data class ExportResult(val exported: Int, val failed: Int)
+    data class ExportResult(val exported: Int, val failed: Int, val cancelled: Boolean = false)
 
     /**
      * Memindahkan file terpilih ke Downloads/Dhika App.
      * Sumber di brankas hanya dihapus setelah salinan tujuan selesai ditulis dan dipublikasikan.
      * Jika ekspor gagal, file terenkripsi di brankas tetap dipertahankan.
      */
-    fun exportToDownloads(files: List<VaultFile>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ExportResult {
+    fun exportToDownloads(files: List<VaultFile>, shouldContinue: () -> Boolean = { true }, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ExportResult {
         var exported = 0
         var failed = 0
         val relativePath = Environment.DIRECTORY_DOWNLOADS + "/Dhika App/"
         val legacyDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Dhika App")
         files.forEachIndexed { index, item ->
+            if (!shouldContinue()) return@forEachIndexed
             onProgress(index, files.size, item.name)
             var mediaUri: Uri? = null
             var legacyTemp: File? = null
@@ -351,7 +352,7 @@ class VaultRepository(private val ctx: Context) {
             }
             onProgress(index + 1, files.size, item.name)
         }
-        return ExportResult(exported, failed)
+        return ExportResult(exported, failed, !shouldContinue())
     }
 
     /**
