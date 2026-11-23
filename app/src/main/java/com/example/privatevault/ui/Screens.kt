@@ -587,6 +587,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
+    var coverTarget by remember { mutableStateOf<VaultFile?>(null) }
     var infoFile by remember { mutableStateOf<VaultFile?>(null) }
     var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
     var actionFolder by remember { mutableStateOf(false) }
