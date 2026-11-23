@@ -279,6 +279,37 @@ class VaultRepository(private val ctx: Context) {
         trashPrefs.edit { remove(item.file.name) }
     }
 
+    data class ExportResult(val exported: Int, val failed: Int)
+
+    /**
+     * Ekspor file terpilih ke folder pilihan pengguna.
+     * File didekripsi langsung ke output stream; salinan di brankas tidak diubah.
+     */
+    fun exportToFolder(treeUri: Uri, files: List<VaultFile>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ExportResult {
+        var exported = 0
+        var failed = 0
+        val rootDocument = DocumentsContract.buildDocumentUriUsingTree(
+            treeUri, DocumentsContract.getTreeDocumentId(treeUri)
+        )
+        files.forEachIndexed { index, item ->
+            onProgress(index, files.size, item.name)
+            try {
+                val mime = android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(item.file.extension.lowercase()) ?: "application/octet-stream"
+                val target = DocumentsContract.createDocument(ctx.contentResolver, rootDocument, mime, item.name)
+                    ?: throw IOException("Tidak bisa membuat file tujuan")
+                val output = ctx.contentResolver.openOutputStream(target, "w")
+                    ?: throw IOException("Tidak bisa membuka file tujuan")
+                output.use { out -> enc(item.file).openFileInput().use { input -> input.copyTo(out, 64 * 1024) } }
+                exported++
+            } catch (_: Exception) {
+                failed++
+            }
+            onProgress(index + 1, files.size, item.name)
+        }
+        return ExportResult(exported, failed)
+    }
+
     /** Dekripsi sementara untuk dilihat/diputar. Hapus file hasilnya setelah selesai. */
     fun open(f: VaultFile): File {
         val out = File(cache, "${System.nanoTime()}_${f.name}"); decryptTo(f.file, out); return out
