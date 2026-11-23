@@ -53,6 +53,12 @@ class MainActivity : FragmentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 8/9 memerlukan izin tulis untuk folder publik Downloads.
+        // Android 10+ memakai MediaStore sehingga tidak meminta izin storage luas.
+        if (Build.VERSION.SDK_INT <= 28 &&
+            checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 1001)
+        }
         val updateFilter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(updateReceiver, updateFilter, Context.RECEIVER_NOT_EXPORTED)
