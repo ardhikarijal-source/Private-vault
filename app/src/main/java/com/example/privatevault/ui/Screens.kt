@@ -52,6 +52,7 @@ import androidx.compose.ui.res.painterResource
 import com.example.privatevault.data.*
 import java.io.File
 import java.util.Date
+import java.util.zip.ZipFile
 
 /* ---------- LOCK ---------- */
 @Composable
@@ -250,6 +251,7 @@ private fun toastImport(ctx: android.content.Context, r: VaultRepository.ImportR
     val parts = mutableListOf("${r.imported} file diamankan")
     if (r.originalsDeleted > 0) parts += "${r.originalsDeleted} file asli dihapus dari perangkat"
     if (r.skipped > 0) parts += "${r.skipped} dilewati (format tidak didukung atau gagal dibaca)"
+    if (r.cancelled) parts += "impor dibatalkan; file yang belum diproses tetap di perangkat"
     android.widget.Toast.makeText(ctx, parts.joinToString(", "), android.widget.Toast.LENGTH_LONG).show()
 }
 
@@ -284,6 +286,43 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
         confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
 }
 
+@Composable
+private fun CbzCoverDialog(repo: VaultRepository, file: VaultFile, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+    val entries by produceState<List<String>?>(null, file.file.absolutePath) {
+        value = withContext(Dispatchers.IO) {
+            val plain = runCatching { repo.open(file) }.getOrNull() ?: return@withContext emptyList()
+            try {
+                ZipFile(plain).use { zip ->
+                    zip.entries().asSequence()
+                        .filter { !it.isDirectory && it.name.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp") }
+                        .map { it.name }.toList()
+                }
+            } catch (_: Exception) { emptyList() }
+            finally { plain.delete() }
+        }
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Pilih sampul CBZ") },
+        text = {
+            Column(Modifier.heightIn(max = 380.dp)) {
+                Text("Pilih salah satu gambar di dalam arsip untuk dijadikan thumbnail.", color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                when {
+                    entries == null -> Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator() }
+                    entries!!.isEmpty() -> Text("Tidak ditemukan gambar yang dapat digunakan.", color = Muted)
+                    else -> LazyColumn {
+                        items(entries!!) { name ->
+                            TextButton(onClick = { onSelect(name) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(name.substringAfterLast('/'), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
+}
+
 /* ---------- HOME ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -314,19 +353,36 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val selectedFiles = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = selectedFiles.isNotEmpty()) { selectedFiles.clear() }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
+    var coverTarget by remember { mutableStateOf<VaultFile?>(null) }
     var infoFile by remember { mutableStateOf<VaultFile?>(null) }
     var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
     var actionFolder by remember { mutableStateOf<File?>(null) }
+    var renameFolderTarget by remember { mutableStateOf<File?>(null) }
     var infoFolder by remember { mutableStateOf<File?>(null) }
     var deleteFolder by remember { mutableStateOf<File?>(null) }
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
+    var importHidden by remember { mutableStateOf(false) }
+    var cancelImport by remember { mutableStateOf(false) }
+    val importCancelSignal = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(PickDocsForMove()) { uris: List<Uri> ->
         val f = target ?: repo.folders().firstOrNull() ?: repo.rootFolder()
-        if (uris.isNotEmpty()) scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris, repo.moveOriginals) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted); onChanged() } finally { importing = false } }
+        if (uris.isNotEmpty()) scope.launch {
+            importCancelSignal.set(false); cancelImport = false; importHidden = false; importing = true
+            try {
+                val r = withContext(Dispatchers.IO) {
+                    repo.import(f, uris, repo.moveOriginals, shouldContinue = { !importCancelSignal.get() }) { done, total, name ->
+                        mainHandler.post { importDone = done; importTotal = total; importName = name }
+                    }
+                }
+                toastImport(ctx, r)
+                if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted)
+                onChanged()
+            } finally { importing = false; importHidden = false; cancelImport = false; importCancelSignal.set(false) }
+        }
     }
     fun launchPicker(dest: File) { target = dest; ExternalFlow.active = true; picker.launch(arrayOf("*/*")) }
     Scaffold(containerColor = Bg,
@@ -445,7 +501,12 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
-    if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
+    if (importing && !importHidden) AlertDialog(onDismissRequest = { importHidden = true }, title = { Text("Mengimpor file") },
+        text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
+        confirmButton = { TextButton({ importHidden = true }) { Text("Sembunyikan") } },
+        dismissButton = { TextButton({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
+    if (importing && importHidden) TextButton(onClick = { importHidden = false },
+        modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
     if (chooseDest) AlertDialog(onDismissRequest = { chooseDest = false }, title = { Text("Simpan ke folder") }, confirmButton = {},
         dismissButton = { TextButton({ chooseDest = false }) { Text("Batal") } },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { folders.forEach { d ->
@@ -454,7 +515,18 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
     deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
-    actionFolder?.let { folder -> AlertDialog(onDismissRequest = { actionFolder = null }, title = { Text(folder.name) }, text = { Text("Pilih tindakan untuk folder ini.") }, confirmButton = { Row { TextButton({ actionFolder = null; infoFolder = folder }) { Text("Informasi") }; TextButton({ actionFolder = null; deleteFolder = folder }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFolder = null }) { Text("Tutup") } }) }
+    actionFolder?.let { folder -> AlertDialog(onDismissRequest = { actionFolder = null }, title = { Text(folder.name) }, text = { Text("Pilih tindakan untuk folder ini.") }, confirmButton = { Row {
+        TextButton({ actionFolder = null; renameFolderTarget = folder }) { Text("Ganti Nama") }
+        TextButton({ actionFolder = null; infoFolder = folder }) { Text("Informasi") }
+        TextButton({ actionFolder = null; deleteFolder = folder }) { Text("Hapus") }
+    } }, dismissButton = { TextButton({ actionFolder = null }) { Text("Tutup") } }) }
+    renameFolderTarget?.let { folder -> NameDialog("Ganti Nama Folder", folder.name) { name ->
+        renameFolderTarget = null
+        if (name != null) {
+            if (repo.renameFolder(folder, name)) onChanged()
+            else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah digunakan", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    } }
     infoFolder?.let { FolderInfoDialog(it) { infoFolder = null } }
     deleteFolder?.let { folder -> AlertDialog(onDismissRequest = { deleteFolder = null }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = null }) { Text("Tidak") } }) }
 }
@@ -483,10 +555,19 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val sel = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var sortMode by remember(tabKey) { mutableStateOf("Terbaru") }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
     val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() }
-    val items = remember(source, tab) { source.filter { it.type == tab } }
+    val items = remember(source, tab, sortMode) {
+        val filtered = source.filter { it.type == tab }
+        when (sortMode) {
+            "Jenis file" -> filtered.sortedWith(compareBy<VaultFile> { it.type?.ordinal ?: 9 }.thenBy { it.name.lowercase() })
+            "Nama file" -> filtered.sortedBy { it.name.lowercase() }
+            else -> filtered.sortedByDescending { it.file.lastModified() }
+        }
+    }
     // Bila tab aktif kosong tetapi tab lain berisi, pindah otomatis supaya file yang baru diunggah langsung terlihat.
     LaunchedEffect(source) {
         if ((tabCounts[tab] ?: 0) == 0) {
@@ -500,6 +581,9 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
+    var importHidden by remember { mutableStateOf(false) }
+    var cancelImport by remember { mutableStateOf(false) }
+    val importCancelSignal = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
@@ -508,11 +592,37 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var actionFolder by remember { mutableStateOf(false) }
     var infoFolder by remember { mutableStateOf(false) }
     var deleteFolder by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(PickDocsForMove()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; if (uris.isNotEmpty()) destination?.let { f -> scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris, repo.moveOriginals) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted); onChanged() } finally { importing = false } } } }
+    val picker = rememberLauncherForActivityResult(PickDocsForMove()) { uris ->
+        val destination = folder ?: if (rootFiles) repo.rootFolder() else null
+        if (uris.isNotEmpty()) destination?.let { f -> scope.launch {
+            importCancelSignal.set(false); cancelImport = false; importHidden = false; importing = true
+            try {
+                val r = withContext(Dispatchers.IO) {
+                    repo.import(f, uris, repo.moveOriginals, shouldContinue = { !importCancelSignal.get() }) { done, total, name ->
+                        mainHandler.post { importDone = done; importTotal = total; importName = name }
+                    }
+                }
+                toastImport(ctx, r)
+                if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted)
+                onChanged()
+            } finally { importing = false; importHidden = false; cancelImport = false; importCancelSignal.set(false) }
+        } }
+    }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Di Luar Folder" else folder?.name ?: "Favorit") },
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
+                Box {
+                    IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.Sort, "Urutkan") }
+                    DropdownMenu(sortMenu, { sortMenu = false }) {
+                        listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
+                            DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = { sortMode = mode; sortMenu = false })
+                        }
+                    }
+                }
+                if (sel.size == 1 && sel.first().type == MediaType.COMIC) {
+                    IconButton(onClick = { coverTarget = sel.first(); sel.clear() }) { Icon(Icons.Default.Image, "Pilih sampul CBZ") }
+                }
                 if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
                 if (sel.isNotEmpty()) IconButton(onClick = { val chosen = sel.toList(); sel.clear(); exportFiles(chosen) }) { Icon(Icons.Default.FileDownload, "Keluarkan file") }
                 if ((folder == null || rootFiles) && sel.isNotEmpty()) {
@@ -586,7 +696,12 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
         }
     }
-    if (importing) AlertDialog(onDismissRequest = {}, title = { Text("Mengimpor file") }, text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } }, confirmButton = {})
+    if (importing && !importHidden) AlertDialog(onDismissRequest = { importHidden = true }, title = { Text("Mengimpor file") },
+        text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
+        confirmButton = { TextButton({ importHidden = true }) { Text("Sembunyikan") } },
+        dismissButton = { TextButton({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
+    if (importing && importHidden) TextButton(onClick = { importHidden = false },
+        modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
     if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { if (repo.renameFolder(folder, n)) { onChanged(); onBack() } else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},
@@ -598,6 +713,14 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
     deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
+    coverTarget?.let { file -> CbzCoverDialog(repo, file, onDismiss = { coverTarget = null }) { entry ->
+        coverTarget = null
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { repo.setComicCover(file, entry) }
+            android.widget.Toast.makeText(ctx, if (ok) "Sampul CBZ diperbarui" else "Tidak dapat menyimpan sampul", android.widget.Toast.LENGTH_SHORT).show()
+            if (ok) onChanged()
+        }
+    } }
     if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
     if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = false }) { Text("Tidak") } })
 }
