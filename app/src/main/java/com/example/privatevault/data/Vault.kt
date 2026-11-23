@@ -389,6 +389,38 @@ class VaultRepository(private val ctx: Context) {
     }
     fun clearCache() { cache.listFiles()?.forEach { it.delete() }; thumbMem.evictAll() }
 
+    /** Mengganti thumbnail CBZ dengan halaman yang dipilih pengguna dari dalam arsip. */
+    fun setComicCover(f: VaultFile, entryName: String): Boolean {
+        if (f.type != MediaType.COMIC || entryName.contains("..") || entryName.startsWith("/")) return false
+        val plain = runCatching { open(f) }.getOrNull() ?: return false
+        val thumb = try {
+            ZipFile(plain).use { zip ->
+                val entry = zip.getEntry(entryName) ?: return false
+                if (entry.isDirectory) return false
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                zip.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+                var sample = 1
+                val longest = maxOf(bounds.outWidth, bounds.outHeight)
+                while (longest / (sample * 2) >= 512) sample *= 2
+                zip.getInputStream(entry).use { input ->
+                    BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    })
+                }
+            }
+        } catch (_: Exception) { null } finally { plain.delete() } ?: return false
+        val temp = File(cache, "cbz_cover_${System.nanoTime()}.jpg")
+        return try {
+            temp.outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+            encryptFrom(temp, thumbFile(f.file))
+            thumbMem.remove(f.file.absolutePath)
+            true
+        } catch (_: Exception) { false }
+        finally { temp.delete(); thumb.recycle() }
+    }
+
     fun thumb(f: VaultFile): Bitmap? {
         val cached = thumbMem.get(f.file.absolutePath)
         if (cached != null) return cached
