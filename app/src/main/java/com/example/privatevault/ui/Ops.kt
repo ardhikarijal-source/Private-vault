@@ -99,7 +99,7 @@ fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<V
                         Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
                             val job = currentCoroutineContext()
                             val result = withContext(Dispatchers.IO) {
-                                repo.exportToDownloads(chosen, shouldContinue = { job.isActive }) { done, total, name ->
+                                repo.exportToDownloads(chosen, shouldContinue = { job[Job]?.isActive == true }) { done, total, name ->
                                     report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
                                 }
                             }
