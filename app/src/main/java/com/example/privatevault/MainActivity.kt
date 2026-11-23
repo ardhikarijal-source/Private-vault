@@ -92,6 +92,10 @@ class MainActivity : FragmentActivity() {
                 var version by remember { mutableIntStateOf(0) }
                 var folderScrollIndex by remember { mutableIntStateOf(0) }
                 var folderScrollOffset by remember { mutableIntStateOf(0) }
+                var rootScrollIndex by remember { mutableIntStateOf(0) }
+                var rootScrollOffset by remember { mutableIntStateOf(0) }
+                var favScrollIndex by remember { mutableIntStateOf(0) }
+                var favScrollOffset by remember { mutableIntStateOf(0) }
                 val changed: () -> Unit = { version++; Unit }
                 // Kunci otomatis saat aplikasi ditutup / ke background
                 var stopAt by remember { mutableLongStateOf(0L) }
@@ -140,13 +144,19 @@ class MainActivity : FragmentActivity() {
                                 Screen.Settings -> SettingsScreen(pm, repo, changed, { screen = Screen.Home }, checkUpdatesManually, checkingUpdates)
                                 Screen.Trash -> TrashScreen(repo, { screen = Screen.Home }, changed)
                                 Screen.RootFiles -> FolderScreen(repo, null, version, { screen = Screen.Home },
-                                    { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.RootFiles) },
-                                    changed, rootFiles = true, onHome = { screen = Screen.Home }, onRootFiles = { screen = Screen.RootFiles },
+                                    { file, files, index, offset ->
+                                        rootScrollIndex = index; rootScrollOffset = offset
+                                        screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.RootFiles)
+                                    },
+                                    changed, rootScrollIndex, rootScrollOffset, rootFiles = true, onHome = { screen = Screen.Home }, onRootFiles = { screen = Screen.RootFiles },
                                     onFav = { screen = Screen.Fav }, onSettings = { screen = Screen.Settings },
                                     clipboard = clipboard, onClipboardChange = { clipboard = it }, showBottomNav = false)
                                 Screen.Fav -> FolderScreen(repo, null, version, { screen = Screen.Home },
-                                    { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Fav) },
-                                    changed, onHome = { screen = Screen.Home }, onRootFiles = { screen = Screen.RootFiles },
+                                    { file, files, index, offset ->
+                                        favScrollIndex = index; favScrollOffset = offset
+                                        screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Fav)
+                                    },
+                                    changed, favScrollIndex, favScrollOffset, onHome = { screen = Screen.Home }, onRootFiles = { screen = Screen.RootFiles },
                                     onFav = { screen = Screen.Fav }, onSettings = { screen = Screen.Settings },
                                     clipboard = clipboard, onClipboardChange = { clipboard = it }, showBottomNav = false)
                                 is Screen.Folder -> FolderScreen(repo, s.dir, version, { screen = Screen.Home },
