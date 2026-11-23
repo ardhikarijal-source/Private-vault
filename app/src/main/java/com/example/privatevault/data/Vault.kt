@@ -336,6 +336,8 @@ class VaultRepository(private val ctx: Context) {
                         throw IOException("Gagal menyelesaikan file tujuan")
                     if (!item.file.delete()) throw IOException("File berhasil diekspor, tetapi sumber belum dapat dihapus")
                 }
+                // Hapus juga salinan dekripsi sementara yang mungkin tersisa setelah file pernah dibuka.
+                cache.listFiles()?.filter { it.isFile && it.name.endsWith("_${item.name}") }?.forEach { it.delete() }
                 thumbFile(item.file).delete()
                 thumbMem.remove(item.file.absolutePath)
                 val favs = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
