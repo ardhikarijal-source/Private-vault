@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.launch
 import com.example.privatevault.data.*
 import com.example.privatevault.ui.*
 import java.io.File
@@ -67,6 +68,23 @@ class MainActivity : FragmentActivity() {
             VaultTheme {
                 var locked by remember { mutableStateOf(true) }
                 var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+                var checkingUpdates by remember { mutableStateOf(false) }
+                val updateScope = rememberCoroutineScope()
+                val checkUpdatesManually: () -> Unit = {
+                    if (!checkingUpdates) {
+                        checkingUpdates = true
+                        updateScope.launch {
+                            val result = runCatching { AppUpdater.check(this@MainActivity) }
+                            checkingUpdates = false
+                            result.onSuccess { update ->
+                                if (update != null) availableUpdate = update
+                                else Toast.makeText(this@MainActivity, "Aplikasi sudah menggunakan versi terbaru.", Toast.LENGTH_LONG).show()
+                            }.onFailure {
+                                Toast.makeText(this@MainActivity, "Tidak dapat memeriksa pembaruan. Periksa koneksi internet.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
                 LaunchedEffect(Unit) {
                     availableUpdate = runCatching { AppUpdater.check(this@MainActivity) }.getOrNull()
                 }
@@ -119,7 +137,7 @@ class MainActivity : FragmentActivity() {
                                     { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) },
                                     { screen = Screen.Fav }, { screen = Screen.Settings }, { screen = Screen.Trash }, { screen = Screen.RootFiles }, changed,
                                     showBottomNav = false)
-                                Screen.Settings -> SettingsScreen(pm, repo, changed) { screen = Screen.Home }
+                                Screen.Settings -> SettingsScreen(pm, repo, changed, { screen = Screen.Home }, checkUpdatesManually, checkingUpdates)
                                 Screen.Trash -> TrashScreen(repo, { screen = Screen.Home }, changed)
                                 Screen.RootFiles -> FolderScreen(repo, null, version, { screen = Screen.Home },
                                     { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.RootFiles) },
