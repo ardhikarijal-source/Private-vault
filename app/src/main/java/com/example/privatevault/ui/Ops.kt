@@ -84,29 +84,20 @@ object Ops {
  */
 @Composable
 fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<VaultFile>) -> Unit {
-    var pending by remember { mutableStateOf<List<VaultFile>>(emptyList()) }
     val onChangedNow by rememberUpdatedState(onChanged)
-    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        val files = pending
-        pending = emptyList()
-        if (uri != null && files.isNotEmpty()) {
-            Ops.start("Mengekspor file", onDone = { onChangedNow() }) { report ->
-                val result = withContext(Dispatchers.IO) {
-                    repo.exportToFolder(uri, files) { done, total, name ->
-                        report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
-                    }
-                }
-                "Ekspor selesai: ${result.exported} file berhasil disimpan" +
-                    if (result.failed > 0) ", ${result.failed} gagal diekspor." else "."
-            }
-        }
-    }
-    return remember {
+    return remember(repo) {
         { files: List<VaultFile> ->
             if (files.isNotEmpty() && !Ops.running) {
-                pending = files.toList()
-                ExternalFlow.active = true
-                folderPicker.launch(null)
+                val chosen = files.toList()
+                Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
+                    val result = withContext(Dispatchers.IO) {
+                        repo.exportToDownloads(chosen) { done, total, name ->
+                            report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+                        }
+                    }
+                    "Selesai: ${result.exported} file dipindahkan ke Downloads/Dhika App" +
+                        if (result.failed > 0) ". ${result.failed} gagal dipindahkan dan tetap tersimpan di brankas." else "."
+                }
             }
         }
     }
