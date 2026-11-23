@@ -202,7 +202,12 @@ fun rememberBackupUi(repo: VaultRepository, onChanged: () -> Unit): BackupUi {
                     oldBackup?.renameTo(finalName)
                     throw IOException("Tidak dapat menetapkan nama backup baru")
                 }
-                oldBackup?.delete()
+                // Bersihkan backup lama dengan pola nama aplikasi, termasuk format bertanggal dari versi sebelumnya.
+                folder.listFiles()
+                    .filter { it.name?.startsWith("DhikaApp-backup") == true &&
+                        (it.name?.endsWith(".dhikabak") == true || it.name == "$finalName.previous") &&
+                        it.name != finalName }
+                    .forEach { it.delete() }
                 "Backup diperbarui: $count file. Backup lama di folder ini digantikan."
             } catch (e: Exception) {
                 if (temp.exists()) temp.delete()
