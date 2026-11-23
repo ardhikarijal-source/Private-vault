@@ -309,6 +309,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val ctx = LocalContext.current
     val removeOriginals = rememberOriginalsRemover()
     val backup = rememberBackupUi(repo, onChanged)
+    val exportFiles = rememberExportUi(repo, onChanged)
     var target by remember { mutableStateOf<File?>(null) }
     val selectedFiles = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = selectedFiles.isNotEmpty()) { selectedFiles.clear() }
@@ -332,6 +333,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
         topBar = { if (selectedFiles.isNotEmpty()) TopAppBar(title = { Text("${selectedFiles.size} dipilih") },
             navigationIcon = { IconButton(onClick = { selectedFiles.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } },
             actions = {
+                IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); exportFiles(chosen) }) { Icon(Icons.Default.FileDownload, "Keluarkan file") }
                 IconButton(onClick = { selectedFiles.forEach { repo.setFav(it, true) }; selectedFiles.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
                 IconButton(onClick = { val chosen = selectedFiles.toList(); selectedFiles.clear(); scope.launch { withContext(Dispatchers.IO) { chosen.forEach(repo::delete) }; onChanged() } }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
@@ -494,6 +496,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val ctx = LocalContext.current
     val removeOriginals = rememberOriginalsRemover()
+    val exportFiles = rememberExportUi(repo, onChanged)
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
@@ -511,6 +514,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
                 if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
+                if (sel.isNotEmpty()) IconButton(onClick = { val chosen = sel.toList(); sel.clear(); exportFiles(chosen) }) { Icon(Icons.Default.FileDownload, "Keluarkan file") }
                 if ((folder == null || rootFiles) && sel.isNotEmpty()) {
                     IconButton(onClick = { moveDlg = true }) { Icon(Icons.Default.DriveFileMove, "Pindahkan ke folder") }
                     IconButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
