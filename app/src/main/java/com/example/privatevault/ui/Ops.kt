@@ -85,21 +85,36 @@ object Ops {
 @Composable
 fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<VaultFile>) -> Unit {
     val onChangedNow by rememberUpdatedState(onChanged)
-    return remember(repo) {
-        { files: List<VaultFile> ->
-            if (files.isNotEmpty() && !Ops.running) {
-                val chosen = files.toList()
-                Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
-                    val result = withContext(Dispatchers.IO) {
-                        repo.exportToDownloads(chosen) { done, total, name ->
-                            report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+    var pending by remember { mutableStateOf<List<VaultFile>?>(null) }
+    pending?.let { files ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text("Pindahkan ke Downloads?") },
+            text = { Text("${files.size} file akan dipindahkan ke Downloads/Dhika App. File yang berhasil dipindahkan akan dihapus dari brankas. Jika gagal, file tetap tersimpan di brankas.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val chosen = pending.orEmpty()
+                    pending = null
+                    if (chosen.isNotEmpty() && !Ops.running) {
+                        Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
+                            val job = currentCoroutineContext()
+                            val result = withContext(Dispatchers.IO) {
+                                repo.exportToDownloads(chosen, shouldContinue = { job.isActive }) { done, total, name ->
+                                    report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+                                }
+                            }
+                            "Selesai: ${result.exported} file dipindahkan ke Downloads/Dhika App" +
+                                (if (result.failed > 0) ". ${result.failed} gagal dan tetap tersimpan di brankas." else ".") +
+                                (if (result.cancelled) " Proses dibatalkan; file yang belum diproses tetap di brankas." else "")
                         }
                     }
-                    "Selesai: ${result.exported} file dipindahkan ke Downloads/Dhika App" +
-                        if (result.failed > 0) ". ${result.failed} gagal dipindahkan dan tetap tersimpan di brankas." else "."
-                }
-            }
-        }
+                }) { Text("Pindahkan") }
+            },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Batal") } }
+        )
+    }
+    return remember {
+        { files: List<VaultFile> -> if (files.isNotEmpty() && !Ops.running) pending = files.toList() }
     }
 }
 
