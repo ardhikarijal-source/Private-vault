@@ -8,7 +8,7 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "com.dhika.app"
-        minSdk = 26; targetSdk = 35; versionCode = 3; versionName = "1.2.0"
+        minSdk = 26; targetSdk = 35; versionCode = 4; versionName = "1.3.0"
     }
     buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
