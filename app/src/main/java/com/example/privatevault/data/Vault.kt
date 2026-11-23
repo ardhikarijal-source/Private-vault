@@ -1,10 +1,14 @@
 package com.example.privatevault.data
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Base64
@@ -125,7 +129,8 @@ class VaultRepository(private val ctx: Context) {
         val imported: Int, val skipped: Int,
         val originalsDeleted: Int = 0,
         /** File asli yang gagal dihapus otomatis (provider tidak mengizinkan). */
-        val undeleted: List<Uri> = emptyList()
+        val undeleted: List<Uri> = emptyList(),
+        val cancelled: Boolean = false
     )
 
     /** Hapus file asli yang dipilih lewat picker. Hanya dipanggil setelah salinan terenkripsi terverifikasi ada. */
@@ -134,10 +139,11 @@ class VaultRepository(private val ctx: Context) {
         else ctx.contentResolver.delete(uri, null, null) > 0
     } catch (_: Exception) { false }
 
-    fun import(folder: File, uris: List<Uri>, deleteOriginals: Boolean = false, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ImportResult {
+    fun import(folder: File, uris: List<Uri>, deleteOriginals: Boolean = false, shouldContinue: () -> Boolean = { true }, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ImportResult {
         var n = 0; var skipped = 0; var deleted = 0
         val undeleted = mutableListOf<Uri>()
         uris.forEachIndexed { index, uri ->
+            if (!shouldContinue()) return@forEachIndexed
             onProgress(index, uris.size, "Menyiapkan file ${index + 1} dari ${uris.size}")
             val name = runCatching {
                 ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
@@ -165,7 +171,7 @@ class VaultRepository(private val ctx: Context) {
             } finally { tmp.delete() }
             onProgress(index + 1, uris.size, "Memproses $name")
         }
-        return ImportResult(n, skipped, deleted, undeleted)
+        return ImportResult(n, skipped, deleted, undeleted, !shouldContinue())
     }
     fun move(f: VaultFile, to: File): Boolean {
         if (!to.isDirectory || to == f.file.parentFile) return false
@@ -280,6 +286,73 @@ class VaultRepository(private val ctx: Context) {
     }
 
     data class ExportResult(val exported: Int, val failed: Int)
+
+    /**
+     * Memindahkan file terpilih ke Downloads/Dhika App.
+     * Sumber di brankas hanya dihapus setelah salinan tujuan selesai ditulis dan dipublikasikan.
+     * Jika ekspor gagal, file terenkripsi di brankas tetap dipertahankan.
+     */
+    fun exportToDownloads(files: List<VaultFile>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ExportResult {
+        var exported = 0
+        var failed = 0
+        val relativePath = Environment.DIRECTORY_DOWNLOADS + "/Dhika App/"
+        val legacyDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Dhika App")
+        files.forEachIndexed { index, item ->
+            onProgress(index, files.size, item.name)
+            var mediaUri: Uri? = null
+            var legacyTemp: File? = null
+            var legacyTarget: File? = null
+            try {
+                val mime = android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(item.file.extension.lowercase()) ?: "application/octet-stream"
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, item.name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    mediaUri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: throw IOException("Tidak dapat membuat file di Downloads")
+                    val output = ctx.contentResolver.openOutputStream(mediaUri!!, "w")
+                        ?: throw IOException("Tidak dapat menulis file tujuan")
+                    val copied = output.use { out ->
+                        enc(item.file).openFileInput().use { input -> input.copyTo(out, 64 * 1024) }
+                    }
+                    if (copied <= 0L) throw IOException("File kosong atau gagal dibaca")
+                    val publish = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    if (ctx.contentResolver.update(mediaUri!!, publish, null, null) <= 0)
+                        throw IOException("Tidak dapat menyelesaikan file tujuan")
+                    if (!item.file.delete()) throw IOException("File berhasil diekspor, tetapi sumber belum dapat dihapus")
+                } else {
+                    if (!legacyDir.exists() && !legacyDir.mkdirs()) throw IOException("Tidak dapat membuat folder Downloads/Dhika App")
+                    legacyTarget = unique(legacyDir, item.name)
+                    legacyTemp = File(legacyDir, ".${legacyTarget.name}.${System.nanoTime()}.pending")
+                    val copied = legacyTemp!!.outputStream().use { out ->
+                        enc(item.file).openFileInput().use { input -> input.copyTo(out, 64 * 1024) }
+                    }
+                    if (copied <= 0L || !legacyTemp!!.renameTo(legacyTarget!!))
+                        throw IOException("Gagal menyelesaikan file tujuan")
+                    if (!item.file.delete()) throw IOException("File berhasil diekspor, tetapi sumber belum dapat dihapus")
+                }
+                thumbFile(item.file).delete()
+                thumbMem.remove(item.file.absolutePath)
+                val favs = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
+                if (favs.remove(item.file.absolutePath)) prefs.edit { putStringSet("fav", favs) }
+                exported++
+            } catch (_: Exception) {
+                // Jika sumber masih ada, hapus salinan parsial/duplikat agar sumber tetap menjadi satu-satunya salinan.
+                if (item.file.exists()) {
+                    mediaUri?.let { runCatching { ctx.contentResolver.delete(it, null, null) } }
+                    legacyTemp?.delete()
+                    legacyTarget?.delete()
+                }
+                failed++
+            }
+            onProgress(index + 1, files.size, item.name)
+        }
+        return ExportResult(exported, failed)
+    }
 
     /**
      * Ekspor file terpilih ke folder pilihan pengguna.
