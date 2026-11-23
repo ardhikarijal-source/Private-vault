@@ -415,11 +415,14 @@ class VaultRepository(private val ctx: Context) {
         return try {
             temp.outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 82, it) }
             encryptFrom(temp, thumbFile(f.file))
+            thumbFile(f.file).setLastModified(System.currentTimeMillis())
             thumbMem.remove(f.file.absolutePath)
             true
         } catch (_: Exception) { false }
         finally { temp.delete(); thumb.recycle() }
     }
+
+    fun thumbRevision(f: VaultFile): Long = thumbFile(f.file).lastModified()
 
     fun thumb(f: VaultFile): Bitmap? {
         val cached = thumbMem.get(f.file.absolutePath)
