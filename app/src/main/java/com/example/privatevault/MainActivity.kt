@@ -82,7 +82,7 @@ class MainActivity : FragmentActivity() {
                                     { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) },
                                     { screen = Screen.Fav }, { screen = Screen.Settings }, { screen = Screen.Trash }, { screen = Screen.RootFiles }, changed,
                                     showBottomNav = false)
-                                Screen.Settings -> SettingsScreen(pm) { screen = Screen.Home }
+                                Screen.Settings -> SettingsScreen(pm, repo, changed) { screen = Screen.Home }
                                 Screen.Trash -> TrashScreen(repo, { screen = Screen.Home }, changed)
                                 Screen.RootFiles -> FolderScreen(repo, null, version, { screen = Screen.Home },
                                     { file, files, _, _ -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.RootFiles) },
@@ -104,6 +104,7 @@ class MainActivity : FragmentActivity() {
                             }
                         }
                     }
+                    OpsHost() // dialog progres/hasil backup & pemulihan
                 }
 
             }

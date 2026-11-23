@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -246,9 +247,10 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
 
 /** Beri tahu pengguna hasil impor (berapa file masuk, berapa dilewati). */
 private fun toastImport(ctx: android.content.Context, r: VaultRepository.ImportResult) {
-    val msg = if (r.skipped == 0) "${r.imported} file diimpor"
-    else "${r.imported} file diimpor, ${r.skipped} dilewati (format tidak didukung atau gagal dibaca)"
-    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
+    val parts = mutableListOf("${r.imported} file diamankan")
+    if (r.originalsDeleted > 0) parts += "${r.originalsDeleted} file asli dihapus dari perangkat"
+    if (r.skipped > 0) parts += "${r.skipped} dilewati (format tidak didukung atau gagal dibaca)"
+    android.widget.Toast.makeText(ctx, parts.joinToString(", "), android.widget.Toast.LENGTH_LONG).show()
 }
 
 private class HomeData(val media: List<VaultFile>, val folders: List<File>, val counts: Map<File, Int>, val covers: Map<File, VaultFile?>)
@@ -300,10 +302,13 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val folders = home?.folders ?: emptyList()
     val typeCounts = remember(all) { all.groupingBy { it.type }.eachCount() }
     var q by remember { mutableStateOf("") }
-    val shown = remember(all, q) { all.filter { it.name.contains(q, true) }.take(if (q.isBlank()) 16 else 60).chunked(4) }
+    val cols = (LocalConfiguration.current.screenWidthDp / 92).coerceIn(4, 10) // lebih banyak kolom saat landscape
+    val shown = remember(all, q, cols) { all.filter { it.name.contains(q, true) }.take(if (q.isBlank()) cols * 4 else 80).chunked(cols) }
     var chooseDest by remember { mutableStateOf(false) }
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
+    val removeOriginals = rememberOriginalsRemover()
+    val backup = rememberBackupUi(repo, onChanged)
     var target by remember { mutableStateOf<File?>(null) }
     val selectedFiles = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = selectedFiles.isNotEmpty()) { selectedFiles.clear() }
@@ -318,9 +323,9 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     var importing by remember { mutableStateOf(false) }
     var importDone by remember { mutableIntStateOf(0) }; var importTotal by remember { mutableIntStateOf(0) }; var importName by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+    val picker = rememberLauncherForActivityResult(PickDocsForMove()) { uris: List<Uri> ->
         val f = target ?: repo.folders().firstOrNull() ?: repo.rootFolder()
-        if (uris.isNotEmpty()) scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); onChanged() } finally { importing = false } }
+        if (uris.isNotEmpty()) scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris, repo.moveOriginals) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted); onChanged() } finally { importing = false } }
     }
     fun launchPicker(dest: File) { target = dest; ExternalFlow.active = true; picker.launch(arrayOf("*/*")) }
     Scaffold(containerColor = Bg,
@@ -421,11 +426,19 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 }
             }
             if (home != null && shown.isEmpty()) item {
-                Text(if (q.isBlank()) "Brankas masih kosong.\nTekan + untuk menambah foto, video, atau komik." else "Tidak ada file yang cocok dengan “$q”.",
-                    color = Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp))
+                Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (q.isBlank()) "Brankas masih kosong.\nTekan + untuk menambah foto, video, atau komik." else "Tidak ada file yang cocok dengan “$q”.",
+                        color = Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    if (q.isBlank()) {
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedButton(onClick = backup.startRestore, shape = RoundedCornerShape(14.dp)) {
+                            Icon(Icons.Default.Restore, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pulihkan dari backup")
+                        }
+                    }
+                }
             }
             items(shown) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = if (selectedFiles.isNotEmpty()) selectedFiles.contains(file) else null, onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(4 - row.size) { Spacer(Modifier.weight(1f)) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { file -> Thumb(repo, file, Modifier.weight(1f), selected = if (selectedFiles.isNotEmpty()) selectedFiles.contains(file) else null, onToggle = { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) }, onLongClick = { if (!selectedFiles.contains(file)) selectedFiles.add(file) }) { if (selectedFiles.isNotEmpty()) { if (selectedFiles.contains(file)) selectedFiles.remove(file) else selectedFiles.add(file) } else onFile(file, all) } }; repeat(cols - row.size) { Spacer(Modifier.weight(1f)) } }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
@@ -480,6 +493,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
     val ctx = LocalContext.current
+    val removeOriginals = rememberOriginalsRemover()
     val scope = rememberCoroutineScope()
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var importing by remember { mutableStateOf(false) }
@@ -491,7 +505,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var actionFolder by remember { mutableStateOf(false) }
     var infoFolder by remember { mutableStateOf(false) }
     var deleteFolder by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; if (uris.isNotEmpty()) destination?.let { f -> scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); onChanged() } finally { importing = false } } } }
+    val picker = rememberLauncherForActivityResult(PickDocsForMove()) { uris -> val destination = folder ?: if (rootFiles) repo.rootFolder() else null; if (uris.isNotEmpty()) destination?.let { f -> scope.launch { importing = true; try { val r = withContext(Dispatchers.IO) { repo.import(f, uris, repo.moveOriginals) { done, total, name -> mainHandler.post { importDone = done; importTotal = total; importName = name } } }; toastImport(ctx, r); if (r.undeleted.isNotEmpty()) removeOriginals(r.undeleted); onChanged() } finally { importing = false } } } }
     Scaffold(containerColor = Bg,
         topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Di Luar Folder" else folder?.name ?: "Favorit") },
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
@@ -553,7 +567,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         Column(Modifier.padding(pad)) {
             MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
-            LazyVerticalGrid(state = gridState, columns = GridCells.Fixed(3), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(items, key = { it.file.absolutePath }) { f ->
                     Thumb(repo, f,
                         selected = if (sel.isNotEmpty()) sel.contains(f) else null,
@@ -587,11 +601,13 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
 /* ---------- PENGATURAN ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
+fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit, onBack: () -> Unit) {
     var bio by remember { mutableStateOf(pm.biometric) }
     var auto by remember { mutableStateOf(pm.autoLockMs) }
     var pinDlg by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
+    val backup = rememberBackupUi(repo, onChanged)
+    var moveOrig by remember { mutableStateOf(repo.moveOriginals) }
     Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Pengaturan") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Keamanan", color = Muted, fontWeight = FontWeight.SemiBold)
@@ -609,7 +625,27 @@ fun SettingsScreen(pm: PinManager, onBack: () -> Unit) {
                 }
             }
             Text("File", color = Muted, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.DriveFileMove, null, tint = Accent)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("Pindahkan file asli")
+                    Text("Setelah diimpor, file asli dihapus dari galeri/penyimpanan sehingga hanya tersimpan (terenkripsi) di aplikasi ini.", color = Muted, fontSize = 12.sp)
+                }
+                Switch(moveOrig, { moveOrig = it; repo.moveOriginals = it })
+            }
             Text("Semua file & thumbnail dienkripsi AES-256 di penyimpanan privat aplikasi.", color = Muted, fontSize = 13.sp)
+            Text("Cadangan", color = Muted, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { backup.startBackup() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Backup, null, tint = Accent)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text("Buat Backup"); Text("Simpan semua isi brankas ke satu file", color = Muted, fontSize = 12.sp) }
+                Icon(Icons.Default.ChevronRight, null, tint = Muted)
+            }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { backup.startRestore() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Restore, null, tint = Accent)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text("Pulihkan Backup"); Text("Buka file backup, termasuk setelah aplikasi dipasang ulang", color = Muted, fontSize = 12.sp) }
+                Icon(Icons.Default.ChevronRight, null, tint = Muted)
+            }
+            Text("Backup berisi folder, foto, video, komik, dan favorit dalam satu file .dhikabak yang dienkripsi dengan password pilihanmu. PIN tidak disertakan. Buat backup sebelum menghapus aplikasi: tanpa backup, file di brankas tidak bisa dipulihkan.", color = Muted, fontSize = 12.sp)
             Text("Tentang", color = Muted, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) { Text("Versi Aplikasi", Modifier.weight(1f)); Text(runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "-", color = Muted) }
         }

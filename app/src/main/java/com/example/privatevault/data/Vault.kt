@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.LruCache
@@ -12,8 +13,12 @@ import androidx.core.content.edit
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.zip.ZipFile
@@ -52,6 +57,11 @@ class VaultRepository(private val ctx: Context) {
     private fun encryptFrom(plain: File, dest: File) { enc(dest).openFileOutput().use { o -> plain.inputStream().use { it.copyTo(o) } } }
     private fun decryptTo(src: File, dest: File) { enc(src).openFileInput().use { i -> dest.outputStream().use { i.copyTo(it) } } }
     private fun thumbFile(f: File) = File(File(f.parentFile, ".thumbs").apply { mkdirs() }, f.name + ".jpg")
+
+    /** Jika aktif, file asli di perangkat dihapus setelah berhasil diamankan ke brankas (benar-benar "pindah", bukan salin). */
+    var moveOriginals: Boolean
+        get() = prefs.getBoolean("move_originals", true)
+        set(v) = prefs.edit { putBoolean("move_originals", v) }
 
     /* ---- folder ---- */
     fun rootFolder(): File = root
@@ -111,10 +121,22 @@ class VaultRepository(private val ctx: Context) {
         return dest
     }
 
-    data class ImportResult(val imported: Int, val skipped: Int)
+    data class ImportResult(
+        val imported: Int, val skipped: Int,
+        val originalsDeleted: Int = 0,
+        /** File asli yang gagal dihapus otomatis (provider tidak mengizinkan). */
+        val undeleted: List<Uri> = emptyList()
+    )
 
-    fun import(folder: File, uris: List<Uri>, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ImportResult {
-        var n = 0; var skipped = 0
+    /** Hapus file asli yang dipilih lewat picker. Hanya dipanggil setelah salinan terenkripsi terverifikasi ada. */
+    private fun deleteOriginal(uri: Uri): Boolean = try {
+        if (DocumentsContract.isDocumentUri(ctx, uri)) DocumentsContract.deleteDocument(ctx.contentResolver, uri)
+        else ctx.contentResolver.delete(uri, null, null) > 0
+    } catch (_: Exception) { false }
+
+    fun import(folder: File, uris: List<Uri>, deleteOriginals: Boolean = false, onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }): ImportResult {
+        var n = 0; var skipped = 0; var deleted = 0
+        val undeleted = mutableListOf<Uri>()
         uris.forEachIndexed { index, uri ->
             onProgress(index, uris.size, "Menyiapkan file ${index + 1} dari ${uris.size}")
             val name = runCatching {
@@ -133,13 +155,17 @@ class VaultRepository(private val ctx: Context) {
                 val input = ctx.contentResolver.openInputStream(uri)
                 if (input == null) { skipped++; return@forEachIndexed }
                 input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
-                store(tmp, folder, name); n++
+                val dest = store(tmp, folder, name); n++
+                // Pindah, bukan salin: hapus file asli hanya jika hasil enkripsi benar-benar ada dan tidak kosong.
+                if (deleteOriginals && dest.isFile && dest.length() >= tmp.length() && dest.length() > 0) {
+                    if (deleteOriginal(uri)) deleted++ else undeleted += uri
+                }
             } catch (_: Exception) {
                 skipped++ // Lewati file yang gagal dibaca; lanjutkan impor berikutnya.
             } finally { tmp.delete() }
             onProgress(index + 1, uris.size, "Memproses $name")
         }
-        return ImportResult(n, skipped)
+        return ImportResult(n, skipped, deleted, undeleted)
     }
     fun move(f: VaultFile, to: File): Boolean {
         if (!to.isDirectory || to == f.file.parentFile) return false
@@ -336,6 +362,97 @@ class VaultRepository(private val ctx: Context) {
     fun favorites(): List<VaultFile> {
         val favs = prefs.getStringSet("fav", emptySet())!!
         return allFiles().filter { it.file.absolutePath in favs }
+    }
+
+    /* ---- backup & restore ---- */
+    data class RestoreResult(val restored: Int, val skipped: Int)
+
+    /**
+     * Tulis seluruh brankas (folder, file, favorit, tanggal) ke satu file backup terenkripsi password.
+     * Sampah tidak ikut. [check] dipanggil rutin agar proses bisa dibatalkan.
+     */
+    fun backupTo(out: OutputStream, password: CharArray, report: (Float, String) -> Unit, check: () -> Unit): Int {
+        val folderList = folders()
+        val all = rootFiles() + folderList.flatMap { files(it) }
+        val totalBytes = all.sumOf { it.file.length() }.coerceAtLeast(1L)
+        val favs = prefs.getStringSet("fav", emptySet())!!
+        val writer = BackupCrypto.Writer(out, password)
+        val data = DataOutputStream(writer)
+        data.writeUTF("DHIKA-BACKUP"); data.writeInt(1); data.writeLong(System.currentTimeMillis())
+        data.writeInt(folderList.size); folderList.forEach { data.writeUTF(it.name) }
+        data.writeInt(all.size)
+        var doneBytes = 0L
+        val buf = ByteArray(BackupCrypto.CHUNK)
+        all.forEachIndexed { i, vf ->
+            check()
+            report(doneBytes.toFloat() / totalBytes, "${i + 1} / ${all.size} • ${vf.name}")
+            data.writeUTF(if (vf.file.parentFile == root) "" else vf.file.parentFile?.name.orEmpty())
+            data.writeUTF(vf.name)
+            data.writeBoolean(vf.file.absolutePath in favs)
+            data.writeLong(vf.file.lastModified())
+            enc(vf.file).openFileInput().use { input ->
+                while (true) {
+                    val r = input.read(buf)
+                    if (r < 0) break
+                    data.writeInt(r); data.write(buf, 0, r)
+                    doneBytes += r
+                    check()
+                }
+            }
+            data.writeInt(0) // akhir blok data file ini
+        }
+        data.writeUTF("END")
+        data.flush()
+        writer.finish()
+        return all.size
+    }
+
+    /** Pulihkan file backup: tiap file dienkripsi ulang dengan kunci perangkat ini. File yang sudah ada dilewati. */
+    fun restoreFrom(input: InputStream, password: CharArray, report: (Float, String) -> Unit, check: () -> Unit): RestoreResult {
+        val data = DataInputStream(BackupCrypto.Reader(input, password))
+        if (data.readUTF() != "DHIKA-BACKUP") throw IOException("Bukan file backup Dhika App")
+        if (data.readInt() != 1) throw IOException("Versi backup tidak didukung. Perbarui aplikasi.")
+        data.readLong()
+        repeat(data.readInt().coerceIn(0, 100_000)) { safeFolderName(data.readUTF())?.let { File(root, it).mkdirs() } }
+        val total = data.readInt().coerceAtLeast(0)
+        var restored = 0; var skipped = 0
+        val newFavs = mutableSetOf<String>()
+        val buf = ByteArray(BackupCrypto.CHUNK)
+        for (i in 0 until total) {
+            check()
+            val folderName = data.readUTF(); val name = data.readUTF()
+            val fav = data.readBoolean(); val modified = data.readLong()
+            report(i.toFloat() / total.coerceAtLeast(1), "${i + 1} / $total • $name")
+            // Nama dari file backup tidak dipercaya: cegah path traversal dan jenis file tak dikenal.
+            val folder: File? = if (folderName.isEmpty()) root else safeFolderName(folderName)?.let { File(root, it) }
+            val validName = name.isNotBlank() && File(name).name == name && VaultFile(File(name)).type != null
+            val wanted = folder != null && validName && !File(folder, name).exists()
+            val tmp = if (wanted) File(cache, "rst_${System.nanoTime()}.${name.substringAfterLast('.')}") else null
+            try {
+                val sink = tmp?.outputStream()
+                try {
+                    while (true) {
+                        val len = data.readInt()
+                        if (len == 0) break
+                        if (len < 0 || len > buf.size) throw IOException("File backup rusak")
+                        data.readFully(buf, 0, len)
+                        sink?.write(buf, 0, len)
+                    }
+                } finally { sink?.close() }
+                if (tmp != null && folder != null) {
+                    folder.mkdirs()
+                    val ok = runCatching {
+                        val dest = store(tmp, folder, name)
+                        if (modified > 0) dest.setLastModified(modified)
+                        if (fav) newFavs.add(dest.absolutePath)
+                    }.isSuccess
+                    if (ok) restored++ else skipped++
+                } else skipped++
+            } finally { tmp?.delete() }
+        }
+        if (data.readUTF() != "END") throw IOException("Backup tidak lengkap")
+        if (newFavs.isNotEmpty()) prefs.edit { putStringSet("fav", prefs.getStringSet("fav", emptySet())!! + newFavs) }
+        return RestoreResult(restored, skipped)
     }
 
     private fun unique(dir: File, name: String): File {

@@ -35,6 +35,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.composed
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.Player
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -58,6 +79,28 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
     var favorite by remember(safeFiles[pager.currentPage].file.absolutePath) { mutableStateOf(repo.isFav(safeFiles[pager.currentPage])) }
     val current = safeFiles[pager.currentPage]
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val view = LocalView.current
+    val activity = remember(ctx) { ctx.findActivity() }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // Mode landscape: sembunyikan status bar & navigation bar agar konten penuh layar; kembalikan saat portrait/keluar.
+    LaunchedEffect(landscape) {
+        val window = activity?.window ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(window, view)
+        if (landscape) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else controller.show(WindowInsetsCompat.Type.systemBars())
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED // kembali mengikuti pengaturan sistem
+            activity?.window?.let { WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars()) }
+        }
+    }
+    val toggleOrientation = {
+        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
 
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
@@ -90,16 +133,16 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                 val opened by produceState<Pair<Boolean, File?>>(false to null, f.file.absolutePath) {
                     value = true to withContext(Dispatchers.IO) { runCatching { repo.open(f) }.getOrNull() }
                 }
-                val openedFile by rememberUpdatedState(opened.second)
-                DisposableEffect(f.file.absolutePath) { onDispose { openedFile?.delete() } }
+                DisposableEffect(f.file.absolutePath) { onDispose { opened.second?.delete() } }
                 val plain = opened.second
                 if (plain != null) {
                     when (f.type) {
                         MediaType.PHOTO -> ZoomImage(plain,
                             onInteraction = { controlsVisible = false },
                             onTap = { controlsVisible = !controlsVisible })
-                        MediaType.VIDEO -> VideoPlayer(plain, active = pager.currentPage == page,
-                            onControlsVisibility = { controlsVisible = it })
+                        MediaType.VIDEO -> VideoPlayer(plain, positionKey = f.file.absolutePath, active = pager.currentPage == page,
+                            controlsVisible = controlsVisible, onControlsChange = { controlsVisible = it },
+                            landscape = landscape, onToggleOrientation = toggleOrientation)
                         MediaType.COMIC -> CbzReader(plain,
                             onInteraction = { controlsVisible = false },
                             controlsVisible = controlsVisible,
@@ -137,12 +180,18 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Hapus", tint = Color.White) }
                     IconButton(onClick = { infoVisible = true }) { Icon(Icons.Default.Info, "Informasi", tint = Color.White) }
                 }
-                // Penghitung file dipindah ke pojok kanan atas agar tidak menabrak slider halaman komik di bawah.
-                if (safeFiles.size > 1) Text(
+                // Tombol putar layar (portrait <-> landscape), berguna saat rotasi otomatis di HP mati.
+                IconButton(
+                    onClick = toggleOrientation,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
+                ) { Icon(Icons.Default.ScreenRotation, "Putar layar", tint = Color.White) }
+                // Penghitung file hanya untuk foto; video dan komik punya kontrol sendiri di bagian bawah.
+                if (safeFiles.size > 1 && current.type == MediaType.PHOTO) Text(
                     "${pager.currentPage + 1} / ${safeFiles.size}",
-                    Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 14.dp)
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
                         .background(Color(0xAA101827), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
                     color = Color.White, fontSize = 12.sp
                 )
             }
@@ -228,18 +277,141 @@ fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}
     )
 }
 
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) { if (c is Activity) return c; c = c.baseContext }
+    return null
+}
+
+private fun formatTime(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    val h = total / 3600; val m = (total % 3600) / 60; val sec = total % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec) else String.format(java.util.Locale.US, "%02d:%02d", m, sec)
+}
+
+/** Posisi terakhir tiap video (hanya di memori) supaya dilanjutkan dari tempat terakhir ditonton. */
+private object VideoPositions {
+    private val map = HashMap<String, Long>()
+    fun get(key: String): Long? = map[key]
+    fun put(key: String, pos: Long, duration: Long) { if (duration > 0 && pos > 3_000 && pos < duration - 3_000) map[key] = pos else map.remove(key) }
+    fun clear() = map.clear()
+}
+
+/**
+ * Pemutar video dengan kontrol sendiri: putar/jeda, mundur/maju 10 dtk (juga ketuk dua kali di sisi layar),
+ * bilah geser, kecepatan 0,5x-2x, ulangi, bisukan, layar penuh/landscape, geser vertikal kiri = kecerahan,
+ * kanan = volume, dan melanjutkan dari posisi terakhir.
+ */
 @Composable
-fun VideoPlayer(file: File, active: Boolean = true, onControlsVisibility: (Boolean) -> Unit = {}) {
+fun VideoPlayer(
+    file: File,
+    positionKey: String,
+    active: Boolean,
+    controlsVisible: Boolean,
+    onControlsChange: (Boolean) -> Unit,
+    landscape: Boolean,
+    onToggleOrientation: () -> Unit
+) {
     val ctx = LocalContext.current
+    val view = LocalView.current
+    val activity = remember(ctx) { ctx.findActivity() }
     val player = remember(file) {
         ExoPlayer.Builder(ctx).build().apply {
             setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+            VideoPositions.get(positionKey)?.let { seekTo(it) }
             prepare()
             playWhenReady = active
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
+    var isPlaying by remember { mutableStateOf(false) }
+    var ended by remember { mutableStateOf(false) }
+    var buffering by remember { mutableStateOf(false) }
+    var position by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var loop by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(false) }
+    var speedMenu by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableFloatStateOf(0f) }
+    var interaction by remember { mutableIntStateOf(0) }
+    var seekShown by remember { mutableStateOf(false) }
+    var seekForward by remember { mutableStateOf(true) }
+    var seekTick by remember { mutableIntStateOf(0) }
+    var hudIcon by remember { mutableStateOf<ImageVector?>(null) }
+    var hudValue by remember { mutableFloatStateOf(0f) }
+    var hudTick by remember { mutableIntStateOf(0) }
+    val controls by rememberUpdatedState(controlsVisible)
+    val setControls by rememberUpdatedState(onControlsChange)
+
+    val audio = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager }
+    var brightness by remember {
+        mutableFloatStateOf(((activity?.window?.attributes?.screenBrightness ?: -1f).takeIf { it >= 0f }) ?: 0.5f)
+    }
+    var volumeFraction by remember {
+        mutableFloatStateOf(audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() / audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1))
+    }
+
+    fun seekBy(deltaMs: Long) {
+        val dur = player.duration
+        val target = (player.currentPosition + deltaMs).coerceAtLeast(0L).let { if (dur > 0) it.coerceAtMost(dur) else it }
+        player.seekTo(target); position = target
+    }
+    fun togglePlay() {
+        if (ended) { player.seekTo(0); player.play() } else if (player.isPlaying) player.pause() else player.play()
+        interaction++
+    }
+    fun setBrightness(v: Float) {
+        brightness = v.coerceIn(0.02f, 1f)
+        activity?.window?.let { w -> val lp = w.attributes; lp.screenBrightness = brightness; w.attributes = lp }
+        hudIcon = Icons.Default.BrightnessMedium; hudValue = brightness; hudTick++
+    }
+    fun setVolume(f: Float) {
+        volumeFraction = f.coerceIn(0f, 1f)
+        val max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, (volumeFraction * max).roundToInt(), 0)
+        hudIcon = if (volumeFraction == 0f) Icons.Default.VolumeOff else Icons.Default.VolumeUp; hudValue = volumeFraction; hudTick++
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                ended = state == Player.STATE_ENDED
+                if (state == Player.STATE_READY) duration = player.duration.coerceAtLeast(0L)
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            VideoPositions.put(positionKey, player.currentPosition, player.duration)
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { // kembalikan kecerahan layar ke pengaturan sistem
+            activity?.window?.let { w -> val lp = w.attributes; lp.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; w.attributes = lp }
+        }
+    }
+    DisposableEffect(isPlaying) { view.keepScreenOn = isPlaying; onDispose { view.keepScreenOn = false } }
     LaunchedEffect(active) { player.playWhenReady = active }
+    LaunchedEffect(speed) { player.setPlaybackSpeed(speed) }
+    LaunchedEffect(loop) { player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF }
+    LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    LaunchedEffect(player) {
+        while (true) {
+            if (controls && !dragging) position = player.currentPosition
+            if (duration <= 0L) duration = player.duration.coerceAtLeast(0L)
+            delay(250)
+        }
+    }
+    // Kontrol hilang sendiri setelah beberapa detik saat video diputar.
+    LaunchedEffect(controls, isPlaying, dragging, interaction, speedMenu) {
+        if (controls && isPlaying && !dragging && !speedMenu) { delay(3500); setControls(false) }
+    }
+    LaunchedEffect(seekTick) { if (seekTick > 0) { seekShown = true; delay(600); seekShown = false } }
+    LaunchedEffect(hudTick) { if (hudTick > 0) { delay(900); hudIcon = null } }
     // Jangan biarkan suara video terus berjalan saat aplikasi ke background / terkunci.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, player) {
@@ -247,17 +419,105 @@ fun VideoPlayer(file: File, active: Boolean = true, onControlsVisibility: (Boole
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val visibilityCallback by rememberUpdatedState(onControlsVisibility)
-    AndroidView({ PlayerView(it).apply {
-        this.player = player
-        useController = true
-        controllerShowTimeoutMs = 2500
-        setShowNextButton(false)
-        setShowPreviousButton(false)
-        setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-            visibilityCallback(visibility == View.VISIBLE)
-        })
-    } }, Modifier.fillMaxSize())
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView({ PlayerView(it).apply {
+            this.player = player
+            useController = false
+            setShutterBackgroundColor(android.graphics.Color.BLACK)
+        } }, Modifier.fillMaxSize())
+
+        // Lapisan gestur: ketuk = tampil/sembunyi kontrol, ketuk dua kali = loncat 10 dtk, geser vertikal = kecerahan/volume.
+        Box(Modifier.fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { setControls(!controls) },
+                    onDoubleTap = { offset ->
+                        val forward = offset.x > size.width / 2f
+                        seekBy(if (forward) 10_000L else -10_000L)
+                        seekForward = forward; seekTick++
+                    })
+            }
+            .pointerInput(Unit) {
+                var leftSide = true
+                detectVerticalDragGestures(
+                    onDragStart = { leftSide = it.x < size.width / 2f },
+                    onVerticalDrag = { change, dy ->
+                        change.consume()
+                        val delta = -dy / size.height * 1.2f
+                        if (leftSide) setBrightness(brightness + delta) else setVolume(volumeFraction + delta)
+                    })
+            })
+
+        if (seekShown) Row(
+            Modifier.align(if (seekForward) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 40.dp)
+                .background(Color(0x99000000), androidx.compose.foundation.shape.CircleShape).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(if (seekForward) Icons.Default.Forward10 else Icons.Default.Replay10, null, tint = Color.White)
+            Spacer(Modifier.width(6.dp))
+            Text(if (seekForward) "+10 dtk" else "-10 dtk", color = Color.White, fontSize = 13.sp)
+        }
+        hudIcon?.let { icon ->
+            Column(Modifier.align(Alignment.Center).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(progress = { hudValue }, modifier = Modifier.width(96.dp), color = Accent, trackColor = Color(0x55FFFFFF))
+            }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
+            enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(170.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+                Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton({ seekBy(-10_000L); interaction++ }, Modifier.size(52.dp)) { Icon(Icons.Default.Replay10, "Mundur 10 detik", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                    Box(Modifier.size(68.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x99101827)).clickable { togglePlay() }, contentAlignment = Alignment.Center) {
+                        if (buffering && !isPlaying) CircularProgressIndicator(Modifier.size(32.dp), color = Color.White, strokeWidth = 3.dp)
+                        else Icon(if (ended) Icons.Default.Replay else if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Putar atau jeda", tint = Color.White, modifier = Modifier.size(40.dp))
+                    }
+                    IconButton({ seekBy(10_000L); interaction++ }, Modifier.size(52.dp)) { Icon(Icons.Default.Forward10, "Maju 10 detik", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    val maxPos = duration.coerceAtLeast(1L).toFloat()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(formatTime(if (dragging) dragValue.toLong() else position), color = Color.White, fontSize = 12.sp)
+                        Slider(
+                            value = (if (dragging) dragValue else position.toFloat()).coerceIn(0f, maxPos),
+                            onValueChange = { dragging = true; dragValue = it },
+                            onValueChangeFinished = { player.seekTo(dragValue.toLong()); position = dragValue.toLong(); dragging = false; interaction++ },
+                            valueRange = 0f..maxPos,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Accent, inactiveTrackColor = Color(0x66FFFFFF))
+                        )
+                        Text(formatTime(duration), color = Color.White, fontSize = 12.sp)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                TextButton({ speedMenu = true }) {
+                                    Icon(Icons.Default.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text((if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString()) + "x", color = Color.White)
+                                }
+                                DropdownMenu(speedMenu, { speedMenu = false }) {
+                                    listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
+                                        val label = (if (sp == sp.toInt().toFloat()) sp.toInt().toString() else sp.toString()) + "x"
+                                        DropdownMenuItem({ Text(if (sp == speed) "$label  ✓" else label) }, { speed = sp; speedMenu = false })
+                                    }
+                                }
+                            }
+                            IconButton({ loop = !loop; interaction++ }) { Icon(if (loop) Icons.Default.RepeatOne else Icons.Default.Repeat, "Ulangi video", tint = if (loop) Accent else Color.White) }
+                            IconButton({ muted = !muted; interaction++ }) { Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, "Bisukan", tint = Color.White) }
+                        }
+                        IconButton(onToggleOrientation) { Icon(if (landscape) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Layar penuh / landscape", tint = Color.White) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -285,6 +545,12 @@ fun CbzReader(
     val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
     val currentIndex = if (verticalMode) verticalListState.firstVisibleItemIndex else pager.currentPage
+    val zoom = remember(file) { CbzZoom() }
+    zoom.vertical = verticalMode
+    val zoomed by remember(zoom) { derivedStateOf { zoom.scale > 1.001f } }
+    LaunchedEffect(verticalMode) { zoom.reset() }
+    LaunchedEffect(pager.currentPage) { if (!verticalMode) zoom.reset() } // halaman baru mulai dari ukuran normal
+    val density = LocalDensity.current
     val scrollConnection = remember(onInteraction) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
@@ -302,14 +568,15 @@ fun CbzReader(
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
         return
     }
-    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(file, verticalMode) {
-        detectTapGestures(onTap = { onToggleControls() })
-    }) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(Modifier.fillMaxSize().cbzZoom(zoom, zoomed, onTap = onToggleControls, onInteraction = onInteraction)) {
         if (verticalMode) {
+            // Saat diperbesar, konten terpotong di bagian bawah; tambah ruang agar halaman terakhir tetap bisa dibaca.
+            val extraBottom = with(density) { (zoom.height * (1f - 1f / zoom.scale)).toDp() }
             androidx.compose.foundation.lazy.LazyColumn(
                 state = verticalListState,
                 modifier = Modifier.fillMaxSize().nestedScroll(scrollConnection),
-                contentPadding = PaddingValues(0.dp),
+                contentPadding = PaddingValues(bottom = extraBottom),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 items(names.size, key = { names[it] }) { index ->
@@ -321,6 +588,15 @@ fun CbzReader(
                     } else Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator() }
                 }
             }
+        } else {
+            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !zoomed) { page ->
+                val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, names[page]) }
+                bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) }
+                    ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+            }
+        }
+        }
+        if (verticalMode) {
             if (controlsVisible) Canvas(
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(top = 130.dp, bottom = 96.dp).width(28.dp)
                     .pointerInput(names.size) {
@@ -345,15 +621,21 @@ fun CbzReader(
                 drawRoundRect(Color.White, Offset(size.width / 2 - 3.dp.toPx(), y),
                     androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbH), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
             }
-        } else {
-            HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
-                val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, names[page]) }
-                bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) }
-                    ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            }
         }
         androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
             enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) { Box(Modifier.fillMaxSize()) {
+            // Zoom: cubit dua jari, ketuk dua kali, atau pakai tombol ini.
+            Column(
+                Modifier.align(Alignment.CenterStart).padding(start = 8.dp)
+                    .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                IconButton(onClick = { zoom.zoomBy(1.5f) }, enabled = zoom.scale < 4.99f) { Icon(Icons.Default.ZoomIn, "Perbesar", tint = Color.White) }
+                Text("${(zoom.scale * 100).roundToInt()}%", color = Color.White, fontSize = 11.sp,
+                    modifier = Modifier.clickable { zoom.reset() }.padding(vertical = 4.dp, horizontal = 6.dp))
+                IconButton(onClick = { zoom.zoomBy(1f / 1.5f) }, enabled = zoom.scale > 1.001f) { Icon(Icons.Default.ZoomOut, "Perkecil", tint = Color.White) }
+            }
             Row(
                 Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 10.dp else 76.dp)
                     .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
@@ -396,6 +678,93 @@ fun CbzReader(
     }
 }
 
+/** Status zoom pembaca komik. Skala 1x-5x; offset dibatasi agar konten tidak keluar dari layar. */
+@Stable
+class CbzZoom {
+    var scale by mutableFloatStateOf(1f)
+    var offsetX by mutableFloatStateOf(0f)
+    var offsetY by mutableFloatStateOf(0f)
+    var width = 0f
+    var height = 0f
+    /** Mode gulir panjang: zoom berpusat di tepi atas dan hanya bergeser horizontal (vertikal dipegang daftar). */
+    var vertical = false
+
+    fun reset() { scale = 1f; offsetX = 0f; offsetY = 0f }
+
+    fun clamp() {
+        val mx = width * (scale - 1f) / 2f
+        val my = if (vertical) 0f else height * (scale - 1f) / 2f
+        offsetX = offsetX.coerceIn(-mx, mx)
+        offsetY = offsetY.coerceIn(-my, my)
+    }
+
+    /** Ubah skala dengan faktor [f] di sekitar titik fokus ([cx], [cy] relatif terhadap pusat layar), plus geseran [panX]/[panY]. */
+    fun zoomBy(f: Float, cx: Float = 0f, cy: Float = 0f, panX: Float = 0f, panY: Float = 0f) {
+        val next = (scale * f).coerceIn(1f, 5f)
+        val real = next / scale
+        scale = next
+        if (scale <= 1.001f) { reset(); return }
+        offsetX = real * offsetX + (1f - real) * cx + panX
+        offsetY = if (vertical) 0f else real * offsetY + (1f - real) * cy + panY
+        clamp()
+    }
+}
+
+/**
+ * Zoom + geser untuk pembaca komik: cubit dua jari memperbesar/memperkecil, ketuk dua kali memperbesar/mengembalikan,
+ * seret saat diperbesar untuk menggeser, ketuk sekali menampilkan/menyembunyikan kontrol.
+ * Cubitan dibaca di fase Initial sehingga daftar/pager di dalamnya tidak ikut bergulir.
+ */
+private fun Modifier.cbzZoom(z: CbzZoom, zoomed: Boolean, onTap: () -> Unit, onInteraction: () -> Unit): Modifier = composed {
+    val tap by rememberUpdatedState(onTap)
+    val interact by rememberUpdatedState(onInteraction)
+    this
+        .onSizeChanged { z.width = it.width.toFloat(); z.height = it.height.toFloat(); z.clamp() }
+        .clipToBounds()
+        .pointerInput(z) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val active = event.changes.filter { it.pressed }
+                    if (active.size >= 2) {
+                        val a = active[0]; val b = active[1]
+                        val oldDistance = (a.previousPosition - b.previousPosition).getDistance()
+                        val newDistance = (a.position - b.position).getDistance()
+                        val factor = if (oldDistance > 0f) newDistance / oldDistance else 1f
+                        val cx = (a.position.x + b.position.x) / 2f - size.width / 2f
+                        val cy = (a.position.y + b.position.y) / 2f - size.height / 2f
+                        val panX = ((a.position.x + b.position.x) - (a.previousPosition.x + b.previousPosition.x)) / 2f
+                        val panY = ((a.position.y + b.position.y) - (a.previousPosition.y + b.previousPosition.y)) / 2f
+                        z.zoomBy(factor, cx, cy, panX, panY)
+                        interact()
+                        event.changes.forEach { it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
+            }
+        }
+        .pointerInput(z) {
+            detectTapGestures(
+                onTap = { tap() },
+                onDoubleTap = { p ->
+                    if (z.scale > 1.001f) z.reset()
+                    else z.zoomBy(2.5f, p.x - size.width / 2f, p.y - size.height / 2f)
+                }
+            )
+        }
+        .then(
+            if (!zoomed) Modifier else Modifier.pointerInput(z, z.vertical) {
+                if (z.vertical) detectHorizontalDragGestures { change, dx -> change.consume(); z.offsetX += dx; z.clamp() }
+                else detectDragGestures { change, drag -> change.consume(); z.offsetX += drag.x; z.offsetY += drag.y; z.clamp() }
+            }
+        )
+        .graphicsLayer {
+            scaleX = z.scale; scaleY = z.scale
+            translationX = z.offsetX; translationY = z.offsetY
+            transformOrigin = TransformOrigin(0.5f, if (z.vertical) 0f else 0.5f)
+        }
+}
+
 /** Cache halaman komik (di memori saja) supaya membalik halaman tidak mendekode ulang. Dikosongkan saat aplikasi terkunci. */
 object CbzCache {
     private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt()) {
@@ -403,7 +772,7 @@ object CbzCache {
     }
     fun get(key: String): Bitmap? = cache.get(key)
     fun put(key: String, bitmap: Bitmap) { cache.put(key, bitmap) }
-    fun clear() = cache.evictAll()
+    fun clear() { cache.evictAll(); VideoPositions.clear() }
 }
 
 /** Satu ImageLoader bersama, dengan dukungan GIF animasi. */
