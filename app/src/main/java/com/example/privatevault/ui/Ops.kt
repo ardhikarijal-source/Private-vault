@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.privatevault.data.VaultRepository
+import com.example.privatevault.data.VaultFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,6 +76,39 @@ object Ops {
     }
 
     fun cancel() { job?.cancel() }
+}
+
+/**
+ * Meminta folder tujuan, lalu mengekspor salinan file terpilih tanpa mengubah isi brankas.
+ */
+@Composable
+fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<VaultFile>) -> Unit {
+    var pending by remember { mutableStateOf<List<VaultFile>>(emptyList()) }
+    val onChangedNow by rememberUpdatedState(onChanged)
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val files = pending
+        pending = emptyList()
+        if (uri != null && files.isNotEmpty()) {
+            Ops.start("Mengekspor file", onDone = { onChangedNow() }) { report ->
+                val result = withContext(Dispatchers.IO) {
+                    repo.exportToFolder(uri, files) { done, total, name ->
+                        report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+                    }
+                }
+                "Ekspor selesai: ${result.exported} file berhasil disimpan" +
+                    if (result.failed > 0) ", ${result.failed} gagal diekspor." else "."
+            }
+        }
+    }
+    return remember {
+        { files: List<VaultFile> ->
+            if (files.isNotEmpty() && !Ops.running) {
+                pending = files.toList()
+                ExternalFlow.active = true
+                folderPicker.launch(null)
+            }
+        }
+    }
 }
 
 /** Dialog progres + hasil untuk pekerjaan di [Ops]. Dipasang sekali di level atas aplikasi. */
