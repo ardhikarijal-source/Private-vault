@@ -216,7 +216,7 @@ private fun EmptyState(type: MediaType, hint: String) {
 
 @Composable
 private fun FolderCover(repo: VaultRepository, file: VaultFile) {
-    val bmp by produceState<android.graphics.Bitmap?>(null, file.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(file) } }
+    val bmp by produceState<android.graphics.Bitmap?>(null, file.file.absolutePath, repo.thumbRevision(file)) { value = withContext(Dispatchers.IO) { repo.thumb(file) } }
     val image = remember(bmp) { bmp?.asImageBitmap() }
     if (image != null) Image(image, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     else Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(38.dp))
@@ -224,7 +224,7 @@ private fun FolderCover(repo: VaultRepository, file: VaultFile) {
 
 @Composable
 fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
-    val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
+    val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath, repo.thumbRevision(f)) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
     val image = remember(bmp) { bmp?.asImageBitmap() }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Item yang dipilih sedikit mengecil (efek pegas) supaya status pilihan terasa jelas.
