@@ -534,7 +534,7 @@ fun CbzReader(
         runCatching {
             ZipFile(file).use { z ->
                 z.entries().asSequence()
-                    .filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }
+                    .filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp", "gif") }
                     .map { it.name }
                     .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
                     .toList()
@@ -581,19 +581,12 @@ fun CbzReader(
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 items(names.size, key = { names[it] }) { index ->
-                    val bmp by produceState<Bitmap?>(null, index, file) { value = loadCbzPage(file, names[index]) }
-                    if (bmp != null) {
-                        Image(bmp!!.asImageBitmap(), "Halaman ${index + 1}",
-                            Modifier.fillMaxWidth().wrapContentHeight().background(Color.White),
-                            contentScale = ContentScale.FillWidth)
-                    } else Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator() }
+                    CbzPage(file, names[index], index, vertical = true)
                 }
             }
         } else {
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !zoomed) { page ->
-                val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, names[page]) }
-                bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize().background(Color.White), contentScale = ContentScale.Fit) }
-                    ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+                CbzPage(file, names[page], page, vertical = false)
             }
         }
         }
@@ -782,6 +775,44 @@ private object ViewerImages {
     fun loader(ctx: android.content.Context): coil.ImageLoader = instance ?: coil.ImageLoader.Builder(ctx.applicationContext).components {
         if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory()) else add(coil.decode.GifDecoder.Factory())
     }.build().also { instance = it }
+}
+
+@Composable
+private fun CbzPage(file: File, entryName: String, page: Int, vertical: Boolean) {
+    val context = LocalContext.current
+    val animated = remember(entryName) { entryName.substringAfterLast('.', "").lowercase() in setOf("gif", "webp") }
+    if (animated) {
+        val bytes by produceState<ByteArray?>(null, file, entryName) {
+            value = withContext(Dispatchers.IO) {
+                runCatching { ZipFile(file).use { zip ->
+                    val entry = zip.getEntry(entryName) ?: return@use null
+                    zip.getInputStream(entry).use { it.readBytes() }
+                } }.getOrNull()
+            }
+        }
+        if (bytes != null) {
+            coil.compose.AsyncImage(
+                model = coil.request.ImageRequest.Builder(context).data(bytes).memoryCachePolicy(coil.request.CachePolicy.DISABLED).build(),
+                imageLoader = ViewerImages.loader(context),
+                contentDescription = "Halaman ${page + 1}",
+                modifier = if (vertical) Modifier.fillMaxWidth().wrapContentHeight().background(Color.White)
+                    else Modifier.fillMaxSize().background(Color.White),
+                contentScale = if (vertical) ContentScale.FillWidth else ContentScale.Fit
+            )
+        } else Box(if (vertical) Modifier.fillMaxWidth().height(180.dp) else Modifier.fillMaxSize(), Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else {
+        val bmp by produceState<Bitmap?>(null, page, file) { value = loadCbzPage(file, entryName) }
+        bmp?.let {
+            Image(it.asImageBitmap(), "Halaman ${page + 1}",
+                if (vertical) Modifier.fillMaxWidth().wrapContentHeight().background(Color.White)
+                else Modifier.fillMaxSize().background(Color.White),
+                contentScale = if (vertical) ContentScale.FillWidth else ContentScale.Fit)
+        } ?: Box(if (vertical) Modifier.fillMaxWidth().height(180.dp) else Modifier.fillMaxSize(), Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    }
 }
 
 private suspend fun loadCbzPage(file: File, entryName: String): Bitmap? {
