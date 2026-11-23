@@ -605,7 +605,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
 /* ---------- PENGATURAN ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit, onBack: () -> Unit) {
+fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit, onBack: () -> Unit, onCheckUpdates: () -> Unit, checkingUpdates: Boolean) {
     var bio by remember { mutableStateOf(pm.biometric) }
     var auto by remember { mutableStateOf(pm.autoLockMs) }
     var pinDlg by remember { mutableStateOf(false) }
@@ -652,6 +652,19 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
             Text("Backup berisi folder, foto, video, komik, dan favorit dalam satu file .dhikabak yang dienkripsi dengan password pilihanmu. PIN tidak disertakan. Buat backup sebelum menghapus aplikasi: tanpa backup, file di brankas tidak bisa dipulihkan.", color = Muted, fontSize = 12.sp)
             Text("Tentang", color = Muted, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) { Text("Versi Aplikasi", Modifier.weight(1f)); Text(runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "-", color = Muted) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                OutlinedButton(onClick = onCheckUpdates, enabled = !checkingUpdates) {
+                    if (checkingUpdates) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Memeriksa…")
+                    } else {
+                        Icon(Icons.Default.SystemUpdate, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Periksa Pembaruan")
+                    }
+                }
+            }
         }
     }
     if (pinDlg) {
