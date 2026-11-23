@@ -128,9 +128,9 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
 /* ---------- THUMBNAIL (didekripsi dari thumbnail terenkripsi) ---------- */
 /** Mengingat tab terakhir yang dibuka per folder, supaya tidak kembali ke "Foto" setelah menutup viewer. */
 private object TabMemory {
-    private val map = mutableMapOf<String, MediaType>()
-    fun get(key: String): MediaType = map[key] ?: MediaType.PHOTO
-    fun set(key: String, type: MediaType) { map[key] = type }
+    private val map = mutableMapOf<String, MediaType?>()
+    fun get(key: String): MediaType? = if (map.containsKey(key)) map[key] else MediaType.PHOTO
+    fun set(key: String, type: MediaType?) { map[key] = type }
 }
 
 /** Klik dengan efek "membal": item mengecil sedikit saat ditekan lalu kembali dengan pegas. */
@@ -178,10 +178,10 @@ private fun greetingNow(): String = when (java.util.Calendar.getInstance().get(j
 
 /** Pemilih jenis media (Foto / Video / Komik) berbentuk pil, lengkap dengan jumlah file. */
 @Composable
-private fun MediaTabs(selected: MediaType, counts: Map<MediaType?, Int>, onSelect: (MediaType) -> Unit) {
+private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSelect: (MediaType?) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).glassSurface(RoundedCornerShape(18.dp)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf(Triple("Foto", MediaType.PHOTO, Icons.Default.Image), Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle), Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook))
+        listOf(Triple("Semua", null as MediaType?, Icons.Default.GridView), Triple("Foto", MediaType.PHOTO, Icons.Default.Image), Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle), Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook))
             .forEach { (label, type, icon) ->
                 val active = selected == type
                 val bg by androidx.compose.animation.animateColorAsState(if (active) Accent else Color.Transparent)
@@ -559,9 +559,9 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     var sortMode by remember(tabKey) { mutableStateOf("Terbaru") }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
-    val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() }
+    val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() + (null to source.size) }
     val items = remember(source, tab, sortMode) {
-        val filtered = source.filter { it.type == tab }
+        val filtered = if (tab == null) source else source.filter { it.type == tab }
         when (sortMode) {
             "Jenis file" -> filtered.sortedWith(compareBy<VaultFile> { it.type?.ordinal ?: 9 }.thenBy { it.name.lowercase() })
             "Nama file" -> filtered.sortedBy { it.name.lowercase() }
@@ -617,7 +617,11 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                     IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.Sort, "Urutkan") }
                     DropdownMenu(sortMenu, { sortMenu = false }) {
                         listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
-                            DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = { sortMode = mode; sortMenu = false })
+                            DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = {
+                                sortMode = mode
+                                if (mode == "Jenis file") { tab = null; TabMemory.set(tabKey, null) }
+                                sortMenu = false
+                            })
                         }
                     }
                 }
