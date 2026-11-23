@@ -197,8 +197,9 @@ private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSele
 }
 
 @Composable
-private fun EmptyState(type: MediaType, hint: String) {
+private fun EmptyState(type: MediaType?, hint: String) {
     val (icon, label) = when (type) {
+        null -> Icons.Default.GridView to "file"
         MediaType.PHOTO -> Icons.Default.Image to "foto"
         MediaType.VIDEO -> Icons.Default.PlayCircle to "video"
         MediaType.COMIC -> Icons.Default.MenuBook to "komik"
