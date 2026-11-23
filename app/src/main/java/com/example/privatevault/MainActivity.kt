@@ -1,6 +1,12 @@
 package com.example.privatevault
 
 import android.os.Bundle
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
+import android.widget.Toast
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -10,6 +16,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -24,8 +34,30 @@ sealed interface Screen {
 }
 
 class MainActivity : FragmentActivity() {
+    private var updateDownloadId: Long = -1L
+    private val updateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            if (id != updateDownloadId) return
+            val installed = runCatching { AppUpdater.installDownloaded(this@MainActivity, id) }.getOrDefault(false)
+            if (!installed) Toast.makeText(this@MainActivity, "Unduhan pembaruan gagal. Silakan coba lagi.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(updateReceiver) }
+        super.onDestroy()
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val updateFilter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(updateReceiver, updateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(updateReceiver, updateFilter)
+        }
         // Blokir screenshot & thumbnail di recent apps
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         val repo = VaultRepository(this); val pm = PinManager(this)
@@ -33,6 +65,10 @@ class MainActivity : FragmentActivity() {
         setContent {
             VaultTheme {
                 var locked by remember { mutableStateOf(true) }
+                var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+                LaunchedEffect(Unit) {
+                    availableUpdate = runCatching { AppUpdater.check(this@MainActivity) }.getOrNull()
+                }
                 var screen by remember { mutableStateOf<Screen>(Screen.Home) }
                 var version by remember { mutableIntStateOf(0) }
                 var folderScrollIndex by remember { mutableIntStateOf(0) }
@@ -105,6 +141,28 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                     OpsHost() // dialog progres/hasil backup & pemulihan
+                    availableUpdate?.let { update ->
+                        AlertDialog(
+                            onDismissRequest = { availableUpdate = null },
+                            title = { Text("Pembaruan tersedia") },
+                            text = { Text("Private Vault versi ${update.versionName} tersedia. Perbarui aplikasi sekarang? Data vault tetap tersimpan.") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    if (!AppUpdater.canInstallPackages(this@MainActivity)) {
+                                        Toast.makeText(this@MainActivity, "Izinkan pemasangan aplikasi dari sumber ini, lalu tekan Update kembali.", Toast.LENGTH_LONG).show()
+                                        AppUpdater.openInstallPermission(this@MainActivity)
+                                    } else {
+                                        updateDownloadId = AppUpdater.enqueueDownload(this@MainActivity, update.apkUrl)
+                                        availableUpdate = null
+                                        Toast.makeText(this@MainActivity, "Pembaruan sedang diunduh. Buka notifikasi unduhan jika pemasang tidak muncul otomatis.", Toast.LENGTH_LONG).show()
+                                    }
+                                }) { Text("Update") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { availableUpdate = null }) { Text("Nanti") }
+                            }
+                        )
+                    }
                 }
 
             }
