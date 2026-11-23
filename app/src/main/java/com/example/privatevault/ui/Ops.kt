@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.documentfile.provider.DocumentFile
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -179,15 +180,32 @@ fun rememberBackupUi(repo: VaultRepository, onChanged: () -> Unit): BackupUi {
     var pendingPw by remember { mutableStateOf<String?>(null) }
     val onChangedNow by rememberUpdatedState(onChanged)
 
-    fun runBackup(uri: Uri, pw: String) {
-        Ops.start("Membuat backup") { report ->
+    fun runBackup(treeUri: Uri, pw: String) {
+        Ops.start("Memperbarui backup") { report ->
             val job = currentCoroutineContext()
+            val folder = DocumentFile.fromTreeUri(app, treeUri) ?: throw IOException("Folder backup tidak dapat diakses")
+            if (!folder.isDirectory || !folder.canWrite()) throw IOException("Folder backup tidak memiliki izin tulis")
+            val finalName = "DhikaApp-backup.dhikabak"
+            val tempName = "DhikaApp-backup-${System.currentTimeMillis()}.tmp"
+            val temp = folder.createFile("application/octet-stream", tempName)
+                ?: throw IOException("Tidak bisa membuat file backup sementara")
+            var oldBackup: DocumentFile? = null
             try {
-                val out = app.contentResolver.openOutputStream(uri, "w") ?: throw IOException("Tidak bisa menulis ke lokasi itu")
+                val out = app.contentResolver.openOutputStream(temp.uri, "w") ?: throw IOException("Tidak bisa menulis backup")
                 val count = out.use { raw -> repo.backupTo(BufferedOutputStream(raw, 64 * 1024), pw.toCharArray(), report) { job.ensureActive() } }
-                "Backup selesai: $count file.\n\nSimpan file .dhikabak di tempat aman (mis. cloud atau komputer). Password tidak bisa dipulihkan jika lupa."
+                // Backup baru harus selesai dahulu sebelum backup lama diganti.
+                oldBackup = folder.findFile(finalName)
+                if (oldBackup != null && !oldBackup!!.renameTo("$finalName.previous")) {
+                    throw IOException("Backup lama tidak dapat diamankan untuk diganti")
+                }
+                if (!temp.renameTo(finalName)) {
+                    oldBackup?.renameTo(finalName)
+                    throw IOException("Tidak dapat menetapkan nama backup baru")
+                }
+                oldBackup?.delete()
+                "Backup diperbarui: $count file. Backup lama di folder ini digantikan."
             } catch (e: Exception) {
-                runCatching { DocumentsContract.deleteDocument(app.contentResolver, uri) } // buang backup yang tidak lengkap
+                if (temp.exists()) temp.delete()
                 throw e
             }
         }
@@ -204,19 +222,19 @@ fun rememberBackupUi(repo: VaultRepository, onChanged: () -> Unit): BackupUi {
         }
     }
 
-    val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val pw = pendingPw; pendingPw = null
         if (uri != null && pw != null) runBackup(uri, pw)
     }
     val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) restoreUri = uri }
 
-    if (backupDlg) PasswordDialog("Buat Backup",
-        "Backup disimpan sebagai satu file terenkripsi. Password ini dibutuhkan untuk membukanya lagi, termasuk setelah aplikasi dipasang ulang. Password tidak bisa dipulihkan.", true) { pw ->
+    if (backupDlg) PasswordDialog("Buat / Perbarui Backup",
+        "Pilih folder penyimpanan. File DhikaApp-backup.dhikabak di folder tersebut akan diganti dengan backup terbaru setelah backup baru selesai dibuat. Password dibutuhkan untuk memulihkan data.", true) { pw ->
         backupDlg = false
         if (pw != null) {
             pendingPw = pw
             ExternalFlow.active = true
-            create.launch("DhikaApp-backup-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date()) + ".dhikabak")
+            folderPicker.launch(null)
         }
     }
     restoreUri?.let { uri ->
