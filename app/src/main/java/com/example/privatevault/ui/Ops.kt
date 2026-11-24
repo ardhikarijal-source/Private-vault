@@ -161,22 +161,7 @@ fun OpsHost() {
             },
             dismissButton = {})
     } else if (title != null) {
-        Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
-            Surface(
-                onClick = { Ops.showProgress() },
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-            ) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CircularProgressIndicator(progress = { Ops.progress }, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text("Proses berjalan · Tampilkan progres", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
-                }
-            }
-        }
+        ProgressChip("Proses berjalan · Tampilkan progres", Ops.progress) { Ops.showProgress() }
     } else if (result != null) {
         AlertDialog(onDismissRequest = { Ops.result = null }, title = { Text("Selesai") }, text = { Text(result) },
             confirmButton = {

@@ -498,8 +498,10 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
         text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
         confirmButton = { Button({ importHidden = true }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Sembunyikan") } },
         dismissButton = { Button({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
-    if (importing && importHidden) TextButton(onClick = { importHidden = false },
-        modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
+    if (importing && importHidden) ProgressChip(
+        "Impor berjalan · $importDone dari $importTotal · Tampilkan",
+        if (importTotal == 0) null else importDone.toFloat() / importTotal
+    ) { importHidden = false }
     if (chooseDest) AlertDialog(onDismissRequest = { chooseDest = false }, title = { Text("Simpan ke folder") }, confirmButton = {},
         dismissButton = { Button({ chooseDest = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { folders.forEach { d ->
@@ -699,8 +701,10 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
         confirmButton = { Button({ importHidden = true }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Sembunyikan") } },
         dismissButton = { Button({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
-    if (importing && importHidden) TextButton(onClick = { importHidden = false },
-        modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
+    if (importing && importHidden) ProgressChip(
+        "Impor berjalan · $importDone dari $importTotal · Tampilkan",
+        if (importTotal == 0) null else importDone.toFloat() / importTotal
+    ) { importHidden = false }
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button(onClick = { confirmDelete = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } })
     if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { if (repo.renameFolder(folder, n)) { onChanged(); onBack() } else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},

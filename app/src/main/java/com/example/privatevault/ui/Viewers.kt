@@ -695,7 +695,7 @@ fun CbzReader(
                     }
                 }
             },
-            text = { Text("Gunakan halaman ini sebagai thumbnail komik?\\n${entry.substringAfterLast('/')}") },
+            text = { Text("Gunakan halaman ini sebagai thumbnail komik?\n${entry.substringAfterLast('/')}") },
             confirmButton = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { coverCandidate = null }, modifier = Modifier.weight(1f),
