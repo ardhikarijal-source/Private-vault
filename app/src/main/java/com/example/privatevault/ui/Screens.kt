@@ -133,6 +133,24 @@ private object TabMemory {
     fun set(key: String, type: MediaType?) { map[key] = type }
 }
 
+/** Simpan pilihan pengurutan per folder/tab meski pengguna membuka viewer lalu kembali. */
+private object SortMemory {
+    private val map = mutableMapOf<String, String>()
+    fun get(key: String): String = map[key] ?: "Terbaru"
+    fun set(key: String, mode: String) { map[key] = mode }
+}
+
+/** Urutan kelompok ekstensi; WebP dan GIF sengaja ditempatkan paling atas. */
+private fun fileTypeSortRank(file: VaultFile): Int = when (file.file.extension.lowercase()) {
+    "webp" -> 0
+    "gif" -> 1
+    "png" -> 2
+    "jpg" -> 3
+    "jpeg" -> 4
+    "cbz" -> 5
+    else -> 6
+}
+
 /** Klik dengan efek "membal": item mengecil sedikit saat ditekan lalu kembali dengan pegas. */
 private fun Modifier.bouncyClick(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, pressedScale: Float = 0.95f): Modifier = composed {
     val source = remember { MutableInteractionSource() }
@@ -531,14 +549,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
-    var sortMode by remember(tabKey) { mutableStateOf("Terbaru") }
+    var sortMode by remember(tabKey) { mutableStateOf(SortMemory.get(tabKey)) }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
     val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() + (null to source.size) }
     val items = remember(source, tab, sortMode) {
         val filtered = if (tab == null) source else source.filter { it.type == tab }
         when (sortMode) {
-            "Jenis file" -> filtered.sortedWith(compareBy<VaultFile> { it.type?.ordinal ?: 9 }.thenBy { it.name.lowercase() })
+            "Jenis file" -> filtered.sortedWith(compareBy<VaultFile> { fileTypeSortRank(it) }
+                .thenBy { it.file.extension.lowercase() }.thenBy { it.name.lowercase() })
             "Nama file" -> filtered.sortedBy { it.name.lowercase() }
             else -> filtered.sortedByDescending { it.file.lastModified() }
         }
@@ -594,6 +613,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
                             DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = {
                                 sortMode = mode
+                                SortMemory.set(tabKey, mode)
                                 if (mode == "Jenis file") { tab = null; TabMemory.set(tabKey, null) }
                                 sortMenu = false
                             })
