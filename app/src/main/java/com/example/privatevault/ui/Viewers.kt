@@ -688,16 +688,24 @@ fun CbzReader(
     coverCandidate?.let { entry ->
         AlertDialog(
             onDismissRequest = { coverCandidate = null },
-            title = { Text("Jadikan sampul CBZ?") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Jadikan sampul CBZ?", modifier = Modifier.weight(1f))
+                    IconButton(onClick = { coverCandidate = null }) {
+                        Icon(Icons.Default.Close, "Tutup")
+                    }
+                }
+            },
             text = { Text("Gunakan gambar ini sebagai thumbnail komik?\\n${entry.substringAfterLast('/')}") },
             confirmButton = {
-                Button(onClick = { coverCandidate = null; onSetCover(entry) },
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, jadikan sampul") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { coverCandidate = null }, modifier = Modifier.weight(1f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") }
+                    Button(onClick = { coverCandidate = null; onSetCover(entry) }, modifier = Modifier.weight(1f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, jadikan sampul") }
+                }
             },
-            dismissButton = {
-                OutlinedButton(onClick = { coverCandidate = null },
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") }
-            }
+            dismissButton = {}
         )
     }
 }
