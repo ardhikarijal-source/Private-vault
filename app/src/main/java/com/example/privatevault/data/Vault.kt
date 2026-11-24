@@ -425,6 +425,11 @@ class VaultRepository(private val ctx: Context) {
             // EncryptedFile tidak dapat menimpa file yang sudah ada. Tulis ke file baru,
             // lalu tukar secara atomik agar thumbnail lama tetap aman jika proses gagal.
             encryptFrom(temp, staged)
+            // Verifikasi hasil enkripsi/dekripsi sebelum mengganti thumbnail aktif.
+            val verified = enc(staged).openFileInput().use { input ->
+                BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 })
+            } ?: throw IOException("Thumbnail hasil enkripsi tidak dapat dibaca")
+            verified.recycle()
             if (target.exists() && !target.renameTo(backup)) throw IOException("Tidak dapat mencadangkan thumbnail lama")
             if (!staged.renameTo(target)) {
                 if (backup.exists()) backup.renameTo(target)
