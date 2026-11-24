@@ -629,18 +629,7 @@ fun CbzReader(
         }
         androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
             enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) { Box(Modifier.fillMaxSize()) {
-            // Zoom: cubit dua jari, ketuk dua kali, atau pakai tombol ini.
-            Column(
-                Modifier.align(Alignment.CenterStart).padding(start = 8.dp)
-                    .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                    .padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                IconButton(onClick = { zoom.zoomBy(1.5f) }, enabled = zoom.scale < 4.99f) { Icon(Icons.Default.ZoomIn, "Perbesar", tint = Color.White) }
-                Text("${(zoom.scale * 100).roundToInt()}%", color = Color.White, fontSize = 11.sp,
-                    modifier = Modifier.clickable { zoom.reset() }.padding(vertical = 4.dp, horizontal = 6.dp))
-                IconButton(onClick = { zoom.zoomBy(1f / 1.5f) }, enabled = zoom.scale > 1.001f) { Icon(Icons.Default.ZoomOut, "Perkecil", tint = Color.White) }
-            }
+            // Zoom tetap aktif lewat pinch dua jari dan ketuk dua kali; tombol samping dihilangkan.
             Row(
                 Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 10.dp else 76.dp)
                     .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
