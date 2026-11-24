@@ -645,10 +645,14 @@ fun CbzReader(
                 Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 10.dp else 76.dp)
                     .background(Color(0xCC101827), androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
                     .padding(horizontal = 8.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 FilterChip(selected = !verticalMode, onClick = { verticalMode = false }, label = { Text("Halaman") })
                 FilterChip(selected = verticalMode, onClick = { verticalMode = true }, label = { Text("Gulir panjang") })
+                IconButton(onClick = { coverCandidate = names[currentIndex.coerceIn(0, names.lastIndex)] }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.AddPhotoAlternate, "Jadikan sampul", tint = Color.White)
+                }
             }
             Row(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp)
@@ -674,9 +678,6 @@ fun CbzReader(
                     colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Color(0xFF1D69D8), inactiveTrackColor = Color(0xFF667085))
                 )
                 Text("${names.size}", color = Color.White)
-                IconButton(onClick = { coverCandidate = names[currentIndex.coerceIn(0, names.lastIndex)] }) {
-                    Icon(Icons.Default.AddPhotoAlternate, "Pilih sampul", tint = Color.White)
-                }
                 IconButton(onClick = {
                     if (verticalMode) scope.launch { verticalListState.animateScrollToItem((currentIndex + 1).coerceAtMost(names.lastIndex)) }
                     else scope.launch { pager.animateScrollToPage((currentIndex + 1).coerceAtMost(names.lastIndex)) }

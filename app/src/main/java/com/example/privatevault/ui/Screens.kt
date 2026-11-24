@@ -775,10 +775,12 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Keamanan", color = Muted, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { pinDlg = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Lock, null, tint = Accent); Text("  Ubah PIN", Modifier.weight(1f)); Icon(Icons.Default.ChevronRight, null, tint = Muted)
+                Icon(Icons.Default.Lock, null, tint = Accent); Spacer(Modifier.width(12.dp)); Text("Ubah PIN", Modifier.weight(1f)); Icon(Icons.Default.ChevronRight, null, tint = Muted)
             }
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Fingerprint, null, tint = Accent); Text("  Aktifkan Biometrik", Modifier.weight(1f)); Switch(bio, { bio = it; pm.biometric = it })
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card)
+                .clickable { bio = !bio; pm.biometric = bio }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Fingerprint, null, tint = Accent); Spacer(Modifier.width(12.dp))
+                Text("Aktifkan Biometrik", Modifier.weight(1f)); Switch(bio, { bio = it; pm.biometric = it })
             }
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) {
                 Text("Kunci Otomatis"); Spacer(Modifier.height(8.dp))
@@ -788,7 +790,8 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
                 }
             }
             Text("File", color = Muted, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card)
+                .clickable { moveOrig = !moveOrig; repo.moveOriginals = moveOrig }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.DriveFileMove, null, tint = Accent)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text("Pindahkan file asli")
@@ -810,19 +813,19 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
             }
             Text("Backup berisi folder, foto, video, komik, dan favorit dalam satu file .dhikabak yang dienkripsi dengan password pilihanmu. PIN tidak disertakan. Buat backup sebelum menghapus aplikasi: tanpa backup, file di brankas tidak bisa dipulihkan.", color = Muted, fontSize = 12.sp)
             Text("Tentang", color = Muted, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).padding(16.dp)) { Text("Versi Aplikasi", Modifier.weight(1f)); Text(runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "-", color = Muted) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                OutlinedButton(onClick = onCheckUpdates, enabled = !checkingUpdates) {
-                    if (checkingUpdates) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Memeriksa…")
-                    } else {
-                        Icon(Icons.Default.SystemUpdate, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Periksa Pembaruan")
-                    }
+            val versionName = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "-"
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card)
+                    .clickable(enabled = !checkingUpdates) { onCheckUpdates() }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.SystemUpdate, null, tint = Accent)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("Periksa Pembaruan")
+                    Text("Versi terpasang $versionName", color = Muted, fontSize = 12.sp)
                 }
+                if (checkingUpdates) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.ChevronRight, null, tint = Muted)
             }
         }
     }
@@ -847,38 +850,50 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
 @Composable
 fun TrashScreen(repo: VaultRepository, onBack: () -> Unit, onChanged: () -> Unit) {
     var version by remember { mutableIntStateOf(0) }
-    var confirm by remember { mutableStateOf<VaultRepository.TrashedFile?>(null) }
     var confirmBulk by remember { mutableStateOf(false) }
     val selected = remember { mutableStateListOf<String>() }
     val items = remember(version) { repo.trashedFiles() }
-    Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Baru Dihapus") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
-        actions = { if (selected.isNotEmpty()) TextButton(onClick = { confirmBulk = true }) { Text("Hapus (${selected.size})") } },
+    Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Sampah") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
+        actions = {
+            if (selected.isNotEmpty()) {
+                TextButton(onClick = {
+                    val paths = selected.toSet()
+                    items.filter { it.file.absolutePath in paths }.forEach { repo.restore(it) }
+                    selected.clear(); version++; onChanged()
+                }) { Text("Pulihkan (${selected.size})") }
+                TextButton(onClick = { confirmBulk = true }) { Text("Hapus (${selected.size})", color = Color(0xFFFF6B73)) }
+            }
+        },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
         if (items.isEmpty()) Box(Modifier.fillMaxSize().padding(pad), Alignment.Center) { Text("Sampah kosong", color = Muted) }
         else LazyColumn(Modifier.padding(pad)) { items(items, key = { it.file.absolutePath }) { item ->
             val bitmap by produceState<android.graphics.Bitmap?>(null, item.file.absolutePath) {
                 value = withContext(Dispatchers.IO) { repo.trashThumb(item) }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val isSelected = selected.contains(item.file.absolutePath)
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(if (isSelected) Color(0x332F7BFF) else Color.Transparent)
+                    .clickable { if (isSelected) selected.remove(item.file.absolutePath) else selected.add(item.file.absolutePath) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)).background(Card2), contentAlignment = Alignment.Center) {
                     bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                         ?: Icon(Icons.Default.Image, null, tint = Muted)
                 }
-                Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text(item.originalName, maxLines = 1)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(item.originalName, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     Text("Dihapus: " + java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(item.deletedAt)), color = Muted, fontSize = 12.sp)
                 }
-                Checkbox(checked = selected.contains(item.file.absolutePath), onCheckedChange = { checked ->
-                    if (checked) { if (!selected.contains(item.file.absolutePath)) selected.add(item.file.absolutePath) }
-                    else selected.remove(item.file.absolutePath)
-                })
-                IconButton(onClick = { if (repo.restore(item)) { selected.remove(item.file.absolutePath); version++; onChanged() } }) { Icon(Icons.Default.Restore, "Pulihkan", tint = Accent) }
-                IconButton(onClick = { confirm = item }) { Icon(Icons.Default.DeleteForever, "Hapus permanen") }
+                if (isSelected) Icon(Icons.Default.CheckCircle, null, tint = Accent)
+                else IconButton(onClick = { if (repo.restore(item)) { selected.remove(item.file.absolutePath); version++; onChanged() } }) {
+                    Icon(Icons.Default.Restore, "Pulihkan", tint = Accent)
+                }
             }
         } }
     }
-    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { Button(onClick = { repo.permanentlyDelete(item); selected.remove(item.file.absolutePath); confirm = null; version++ }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya") } }, dismissButton = { Button(onClick = { confirm = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } }) }
     if (confirmBulk) AlertDialog(onDismissRequest = { confirmBulk = false }, title = { Text("Hapus beberapa file?") }, text = { Text("${selected.size} file akan dihapus permanen dan tidak dapat dipulihkan.") },
-        confirmButton = { Button(onClick = { val paths = selected.toSet(); items.filter { it.file.absolutePath in paths }.forEach(repo::permanentlyDelete); selected.clear(); confirmBulk = false; version++ }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus permanen") } },
-        dismissButton = { Button(onClick = { confirmBulk = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
+        confirmButton = { ConfirmButton("Hapus permanen", destructive = true) { val paths = selected.toSet(); items.filter { it.file.absolutePath in paths }.forEach(repo::permanentlyDelete); selected.clear(); confirmBulk = false; version++ } },
+        dismissButton = { CancelButton("Batal") { confirmBulk = false } })
 }
