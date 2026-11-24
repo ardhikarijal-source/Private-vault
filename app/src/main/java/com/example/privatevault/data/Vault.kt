@@ -415,14 +415,29 @@ class VaultRepository(private val ctx: Context) {
             }
         } catch (_: Exception) { null } finally { plain.delete() } ?: return false
         val temp = File(cache, "cbz_cover_${System.nanoTime()}.jpg")
+        val target = thumbFile(f.file)
+        val staged = File(target.parentFile, ".${target.name}.${System.nanoTime()}.new")
+        val backup = File(target.parentFile, ".${target.name}.${System.nanoTime()}.bak")
         return try {
-            temp.outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 82, it) }
-            encryptFrom(temp, thumbFile(f.file))
-            thumbFile(f.file).setLastModified(System.currentTimeMillis())
+            temp.outputStream().use { out ->
+                if (!thumb.compress(Bitmap.CompressFormat.JPEG, 82, out)) throw IOException("Gagal membuat thumbnail")
+            }
+            // EncryptedFile tidak dapat menimpa file yang sudah ada. Tulis ke file baru,
+            // lalu tukar secara atomik agar thumbnail lama tetap aman jika proses gagal.
+            encryptFrom(temp, staged)
+            if (target.exists() && !target.renameTo(backup)) throw IOException("Tidak dapat mencadangkan thumbnail lama")
+            if (!staged.renameTo(target)) {
+                if (backup.exists()) backup.renameTo(target)
+                throw IOException("Tidak dapat memasang thumbnail baru")
+            }
+            backup.delete()
+            target.setLastModified(System.currentTimeMillis())
             thumbMem.remove(f.file.absolutePath)
             true
-        } catch (_: Exception) { false }
-        finally { temp.delete(); thumb.recycle() }
+        } catch (_: Exception) {
+            if (!target.exists() && backup.exists()) backup.renameTo(target)
+            false
+        } finally { temp.delete(); staged.delete(); backup.delete(); thumb.recycle() }
     }
 
     fun thumbRevision(f: VaultFile): Long = thumbFile(f.file).lastModified()
