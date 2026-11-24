@@ -97,23 +97,27 @@ fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<V
             title = { Text("Pindahkan ke Downloads?") },
             text = { Text("${files.size} file akan dipindahkan ke Downloads/Dhika App. File yang berhasil dipindahkan akan dihapus dari brankas. Jika gagal, file tetap tersimpan di brankas.") },
             confirmButton = {
-                TextButton(onClick = {
-                    val chosen = pending.orEmpty()
-                    pending = null
-                    if (chosen.isNotEmpty() && !Ops.running) {
-                        Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
-                            val job = currentCoroutineContext()
-                            val result = withContext(Dispatchers.IO) {
-                                repo.exportToDownloads(chosen, shouldContinue = { job[Job]?.isActive == true }) { done, total, name ->
-                                    report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { pending = null }, modifier = Modifier.weight(1f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") }
+                    Button(onClick = {
+                        val chosen = pending.orEmpty()
+                        pending = null
+                        if (chosen.isNotEmpty() && !Ops.running) {
+                            Ops.start("Memindahkan file ke Downloads/Dhika App", onDone = { onChangedNow() }) { report ->
+                                val job = currentCoroutineContext()
+                                val result = withContext(Dispatchers.IO) {
+                                    repo.exportToDownloads(chosen, shouldContinue = { job[Job]?.isActive == true }) { done, total, name ->
+                                        report(if (total == 0) 1f else done.toFloat() / total, "$done dari $total · $name")
+                                    }
                                 }
+                                "Selesai: ${result.exported} file dipindahkan ke Downloads/Dhika App" +
+                                    (if (result.failed > 0) ". ${result.failed} gagal dan tetap tersimpan di brankas." else ".") +
+                                    (if (result.cancelled) " Proses dibatalkan; file yang belum diproses tetap di brankas." else "")
                             }
-                            "Selesai: ${result.exported} file dipindahkan ke Downloads/Dhika App" +
-                                (if (result.failed > 0) ". ${result.failed} gagal dan tetap tersimpan di brankas." else ".") +
-                                (if (result.cancelled) " Proses dibatalkan; file yang belum diproses tetap di brankas." else "")
                         }
-                    }
-                }, modifier = Modifier.weight(1f), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Pindahkan") }
+                    }, modifier = Modifier.weight(1f), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Pindahkan") }
+                }
             },
             dismissButton = { OutlinedButton(onClick = { pending = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } }
         )
