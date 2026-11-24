@@ -352,6 +352,13 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 
 
 
+/** Posisi daftar hasil pencarian tetap tersimpan saat membuka file lalu kembali. */
+private object SearchScrollMemory {
+    private val positions = mutableMapOf<String, Pair<Int, Int>>()
+    fun get(query: String): Pair<Int, Int> = positions[query] ?: (0 to 0)
+    fun set(query: String, index: Int, offset: Int) { positions[query] = index.coerceAtLeast(0) to offset.coerceAtLeast(0) }
+}
+
 /* ---------- SEARCH RESULTS ---------- */
 @Composable
 fun SearchScreen(
@@ -583,8 +590,32 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     ) { importHidden = false }
     if (chooseDest) AlertDialog(onDismissRequest = { chooseDest = false }, title = { Text("Simpan ke folder") }, confirmButton = {},
         dismissButton = { CancelButton("Batal") { chooseDest = false } },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) { folders.forEach { d ->
-            Button({ chooseDest = false; launchPicker(d) }, Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(d.name, maxLines = 1, modifier = Modifier.fillMaxWidth()) } } } })
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                folders.forEach { d ->
+                    val cover = home?.covers?.get(d)
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card)
+                            .bouncyClick(onClick = { chooseDest = false; launchPicker(d) })
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)).background(Card2), contentAlignment = Alignment.Center) {
+                            if (cover != null) FolderCover(repo, cover)
+                            else Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.size(30.dp))
+                        }
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text("${home?.counts?.get(d) ?: 0} file", color = Muted, fontSize = 11.sp)
+                        }
+                        Icon(Icons.Default.ChevronRight, null, tint = Muted)
+                    }
+                }
+                OutlinedButton(onClick = { chooseDest = false; newDialog = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                    Icon(Icons.Default.CreateNewFolder, null); Spacer(Modifier.width(8.dp)); Text("Buat folder baru")
+                }
+            }
+        })
     if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { if (repo.createFolder(n)) onChanged() else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     actionFile?.let { file ->
         AlertDialog(
