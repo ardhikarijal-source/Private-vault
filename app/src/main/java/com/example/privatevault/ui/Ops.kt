@@ -113,7 +113,7 @@ fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<V
                     }
                 }, modifier = Modifier.weight(1f), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Pindahkan") }
             },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("Batal") } }
+            dismissButton = { OutlinedButton(onClick = { pending = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } }
         )
     }
     return remember {
