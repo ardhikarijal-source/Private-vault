@@ -8,7 +8,7 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "com.dhika.app"
-        minSdk = 26; targetSdk = 35; versionCode = 9; versionName = "1.3.5"
+        minSdk = 26; targetSdk = 35; versionCode = 10; versionName = "1.3.6"
     }
     signingConfigs {
         create("release") {
