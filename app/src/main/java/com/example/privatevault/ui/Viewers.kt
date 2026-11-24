@@ -592,16 +592,12 @@ fun CbzReader(
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 items(names.size, key = { names[it] }) { index ->
-                    Box(Modifier.fillMaxWidth().pointerInput(names[index]) {
-                        detectTapGestures(onLongPress = { coverCandidate = names[index] })
-                    }) { CbzPage(file, names[index], index, vertical = true) }
+                    CbzPage(file, names[index], index, vertical = true)
                 }
             }
         } else {
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !zoomed) { page ->
-                Box(Modifier.fillMaxSize().pointerInput(names[page]) {
-                    detectTapGestures(onLongPress = { coverCandidate = names[page] })
-                }) { CbzPage(file, names[page], page, vertical = false) }
+                CbzPage(file, names[page], page, vertical = false)
             }
         }
         }
@@ -678,6 +674,9 @@ fun CbzReader(
                     colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Color(0xFF1D69D8), inactiveTrackColor = Color(0xFF667085))
                 )
                 Text("${names.size}", color = Color.White)
+                IconButton(onClick = { coverCandidate = names[currentIndex.coerceIn(0, names.lastIndex)] }) {
+                    Icon(Icons.Default.AddPhotoAlternate, "Pilih sampul", tint = Color.White)
+                }
                 IconButton(onClick = {
                     if (verticalMode) scope.launch { verticalListState.animateScrollToItem((currentIndex + 1).coerceAtMost(names.lastIndex)) }
                     else scope.launch { pager.animateScrollToPage((currentIndex + 1).coerceAtMost(names.lastIndex)) }
@@ -696,7 +695,7 @@ fun CbzReader(
                     }
                 }
             },
-            text = { Text("Gunakan gambar ini sebagai thumbnail komik?\\n${entry.substringAfterLast('/')}") },
+            text = { Text("Gunakan halaman ini sebagai thumbnail komik?\\n${entry.substringAfterLast('/')}") },
             confirmButton = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { coverCandidate = null }, modifier = Modifier.weight(1f),
