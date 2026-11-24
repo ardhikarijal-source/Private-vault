@@ -179,20 +179,31 @@ private fun greetingNow(): String = when (java.util.Calendar.getInstance().get(j
 /** Pemilih jenis media (Foto / Video / Komik) berbentuk pil, lengkap dengan jumlah file. */
 @Composable
 private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSelect: (MediaType?) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).glassSurface(RoundedCornerShape(18.dp)).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf(Triple("Semua", null as MediaType?, Icons.Default.GridView), Triple("Foto", MediaType.PHOTO, Icons.Default.Image), Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle), Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook))
-            .forEach { (label, type, icon) ->
-                val active = selected == type
-                val bg by androidx.compose.animation.animateColorAsState(if (active) Accent else Color.Transparent)
-                Row(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(bg).clickable { onSelect(type) }.padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(icon, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("$label ${counts[type] ?: 0}", color = if (active) Color.White else Muted, fontSize = 13.sp,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
+            .glassSurface(RoundedCornerShape(20.dp)).padding(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        listOf(
+            Triple("Semua", null as MediaType?, Icons.Default.GridView),
+            Triple("Foto", MediaType.PHOTO, Icons.Default.Image),
+            Triple("Video", MediaType.VIDEO, Icons.Default.PlayCircle),
+            Triple("Komik", MediaType.COMIC, Icons.Default.MenuBook)
+        ).forEach { (label, type, icon) ->
+            val active = selected == type
+            val bg by androidx.compose.animation.animateColorAsState(if (active) Accent else Color.Transparent)
+            Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(15.dp)).background(bg)
+                    .clickable { onSelect(type) }.padding(vertical = 10.dp, horizontal = 3.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(icon, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(21.dp))
+                Text("$label  ${counts[type] ?: 0}", color = if (active) Color.White else Muted,
+                    fontSize = 11.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
+        }
     }
 }
 
@@ -287,42 +298,6 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
         confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
 }
 
-@Composable
-private fun CbzCoverDialog(repo: VaultRepository, file: VaultFile, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
-    val entries by produceState<List<String>?>(null, file.file.absolutePath) {
-        value = withContext(Dispatchers.IO) {
-            val plain = runCatching { repo.open(file) }.getOrNull() ?: return@withContext emptyList()
-            try {
-                ZipFile(plain).use { zip ->
-                    zip.entries().asSequence()
-                        .filter { !it.isDirectory && it.name.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp") }
-                        .map { it.name }.toList()
-                }
-            } catch (_: Exception) { emptyList() }
-            finally { plain.delete() }
-        }
-    }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Pilih sampul CBZ") },
-        text = {
-            Column(Modifier.heightIn(max = 380.dp)) {
-                Text("Pilih salah satu gambar di dalam arsip untuk dijadikan thumbnail.", color = Muted, fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                when {
-                    entries == null -> Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator() }
-                    entries!!.isEmpty() -> Text("Tidak ditemukan gambar yang dapat digunakan.", color = Muted)
-                    else -> LazyColumn {
-                        items(entries!!) { name ->
-                            TextButton(onClick = { onSelect(name) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(name.substringAfterLast('/'), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.fillMaxWidth())
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
-}
 
 /* ---------- HOME ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -354,7 +329,6 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val selectedFiles = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = selectedFiles.isNotEmpty()) { selectedFiles.clear() }
     var actionFile by remember { mutableStateOf<VaultFile?>(null) }
-    var coverTarget by remember { mutableStateOf<VaultFile?>(null) }
     var infoFile by remember { mutableStateOf<VaultFile?>(null) }
     var deleteFile by remember { mutableStateOf<VaultFile?>(null) }
     var actionFolder by remember { mutableStateOf<File?>(null) }
@@ -627,7 +601,6 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                     }
                 }
                 if (sel.size == 1 && sel.first().type == MediaType.COMIC) {
-                    IconButton(onClick = { coverTarget = sel.first(); sel.clear() }) { Icon(Icons.Default.Image, "Pilih sampul CBZ") }
                 }
                 if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
                 if (sel.isNotEmpty()) IconButton(onClick = { val chosen = sel.toList(); sel.clear(); exportFiles(chosen) }) { Icon(Icons.Default.FileDownload, "Keluarkan file") }
@@ -719,14 +692,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
     deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
-    coverTarget?.let { file -> CbzCoverDialog(repo, file, onDismiss = { coverTarget = null }) { entry ->
-        coverTarget = null
-        scope.launch {
-            val ok = withContext(Dispatchers.IO) { repo.setComicCover(file, entry) }
-            android.widget.Toast.makeText(ctx, if (ok) "Sampul CBZ diperbarui" else "Tidak dapat menyimpan sampul", android.widget.Toast.LENGTH_SHORT).show()
-            if (ok) onChanged()
-        }
-    } }
+
     if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
     if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = false }) { Text("Tidak") } })
 }
