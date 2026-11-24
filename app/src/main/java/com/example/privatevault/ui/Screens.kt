@@ -372,7 +372,19 @@ fun SearchScreen(
     onBack: () -> Unit,
     onFile: (VaultFile, List<VaultFile>) -> Unit
 ) {
-    val state = rememberLazyGridState()
+    // Pulihkan posisi terakhir untuk query ini ketika kembali dari viewer.
+    val savedPosition = SearchScrollMemory.get(query)
+    val state = rememberLazyGridState(
+        initialFirstVisibleItemIndex = savedPosition.first,
+        initialFirstVisibleItemScrollOffset = savedPosition.second
+    )
+    LaunchedEffect(state, query) {
+        androidx.compose.runtime.snapshotFlow {
+            state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            SearchScrollMemory.set(query, index, offset)
+        }
+    }
     var selection by remember(query) { mutableStateOf<VaultFile?>(null) }
     Scaffold(containerColor = Bg, topBar = {
         TopAppBar(
@@ -394,7 +406,11 @@ fun SearchScreen(
                 items(results, key = { it.file.absolutePath }) { file ->
                     Thumb(repo, file, onLongClick = { selection = file }) {
                         if (selection != null) selection = if (selection == file) null else file
-                        else onFile(file, results)
+                        else {
+                            // Simpan langsung sebelum SearchScreen dilepas oleh navigasi.
+                            SearchScrollMemory.set(query, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset)
+                            onFile(file, results)
+                        }
                     }
                 }
             }
