@@ -184,7 +184,7 @@ class MainActivity : FragmentActivity() {
                         AlertDialog(
                             onDismissRequest = { availableUpdate = null },
                             title = { Text("Pembaruan tersedia") },
-                            text = { Text("Private Vault versi ${update.versionName} tersedia. Perbarui aplikasi sekarang? Data vault tetap tersimpan.") },
+                            text = { Text("Dhika App versi ${update.versionName} tersedia. Perbarui aplikasi sekarang? Data vault tetap tersimpan.") },
                             confirmButton = {
                                 TextButton(onClick = {
                                     if (!AppUpdater.canInstallPackages(this@MainActivity)) {

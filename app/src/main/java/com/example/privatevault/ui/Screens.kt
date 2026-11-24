@@ -116,9 +116,14 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
         }
         Text(error, color = androidx.compose.ui.graphics.Color(0xFFFF6B73), fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.heightIn(min = 36.dp))
         listOf("123", "456", "789", " 0⌫").forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 12.dp)) {
-                row.forEach { ch -> if (ch == ' ') Spacer(Modifier.size(64.dp)) else
-                    Box(Modifier.size(64.dp).clip(CircleShape).background(Card).clickable { press(ch.toString()) }, contentAlignment = Alignment.Center) { Text(ch.toString(), fontSize = 22.sp) } }
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 14.dp)) {
+                row.forEach { ch ->
+                    when (ch) {
+                        ' ' -> Spacer(Modifier.size(72.dp))
+                        '⌫' -> PinKey(onClick = { press("⌫") }) { Icon(Icons.Default.Backspace, "Hapus digit") }
+                        else -> PinKey(onClick = { press(ch.toString()) }) { Text(ch.toString(), fontSize = 24.sp) }
+                    }
+                }
             }
         }
         if (!setup && pm.biometric && canBio) TextButton(onClick = ::bio) { Icon(Icons.Default.Fingerprint, null); Text(" Gunakan biometrik") }
@@ -158,6 +163,19 @@ private fun Modifier.bouncyClick(onClick: () -> Unit, onLongClick: (() -> Unit)?
     val s by animateFloatAsState(if (pressed) pressedScale else 1f, spring(dampingRatio = 0.55f, stiffness = 450f))
     this.graphicsLayer { scaleX = s; scaleY = s }
         .combinedClickable(interactionSource = source, indication = null, onClick = onClick, onLongClick = onLongClick)
+}
+
+@Composable
+private fun PinKey(onClick: () -> Unit, content: @Composable () -> Unit) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Box(
+        Modifier.size(72.dp).clip(CircleShape).background(Card)
+            .bouncyClick(onClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onClick()
+            }, pressedScale = 0.9f),
+        contentAlignment = Alignment.Center
+    ) { content() }
 }
 
 /** true saat pengguna menggulir ke atas (atau di posisi awal): dipakai untuk melipat tombol Tambah. */
@@ -214,12 +232,12 @@ private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSele
                 Modifier.weight(1f).clip(RoundedCornerShape(15.dp)).background(bg)
                     .clickable { onSelect(type) }.padding(vertical = 10.dp, horizontal = 3.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Icon(icon, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(21.dp))
-                Text("$label  ${counts[type] ?: 0}", color = if (active) Color.White else Muted,
-                    fontSize = 11.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                    maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(label, color = if (active) Color.White else Muted, fontSize = 11.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+                Text("${counts[type] ?: 0}", color = if (active) Color(0xCCFFFFFF) else Muted, fontSize = 10.sp, maxLines = 1)
             }
         }
     }
@@ -758,7 +776,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { ConfirmButton("Ya, hapus", destructive = true) { deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } } }, dismissButton = { CancelButton("Tidak") { deleteFile = null } }) }
 
     if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
-    if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button({ deleteFolder = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } })
+    if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { ConfirmButton("Ya, hapus", destructive = true) { deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } } }, dismissButton = { CancelButton("Tidak") { deleteFolder = false } })
 }
 
 /* ---------- PENGATURAN ---------- */
