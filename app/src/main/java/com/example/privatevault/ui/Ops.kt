@@ -165,7 +165,7 @@ fun OpsHost() {
     } else if (result != null) {
         AlertDialog(onDismissRequest = { Ops.result = null }, title = { Text("Selesai") }, text = { Text(result) },
             confirmButton = {
-                Button({ Ops.result = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("OK") }
+                ConfirmButton("OK") { Ops.result = null }
             })
     }
 }
@@ -188,16 +188,16 @@ private fun PasswordDialog(title: String, message: String, confirm: Boolean, don
             }
         },
         confirmButton = {
-            TextButton({
+            ConfirmButton(if (confirm) "Lanjut" else "Pulihkan") {
                 when {
                     confirm && pw.length < 6 -> error = "Password minimal 6 karakter"
                     confirm && pw != pw2 -> error = "Kedua password tidak sama"
                     pw.isEmpty() -> error = "Masukkan password"
                     else -> done(pw)
                 }
-            }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (confirm) "Lanjut" else "Pulihkan") }
+            }
         },
-        dismissButton = { OutlinedButton({ done(null) }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
+        dismissButton = { CancelButton("Batal") { done(null) } })
 }
 
 class BackupUi(val startBackup: () -> Unit, val startRestore: () -> Unit)

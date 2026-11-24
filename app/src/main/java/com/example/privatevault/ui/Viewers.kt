@@ -107,11 +107,11 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
         onDismissRequest = { confirmDelete = false },
         title = { Text("Hapus file?") },
         text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") },
-        confirmButton = { Button(onClick = {
+        confirmButton = { ConfirmButton("Hapus", destructive = true) {
             confirmDelete = false
             scope.launch { withContext(Dispatchers.IO) { repo.delete(current) }; onChanged(); onBack() }
-        }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus") } },
-        dismissButton = { Button(onClick = { confirmDelete = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } }
+        } },
+        dismissButton = { CancelButton("Batal") { confirmDelete = false } }
     )
     if (infoVisible) AlertDialog(
         onDismissRequest = { infoVisible = false },
@@ -123,7 +123,7 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
             Text("Lokasi: ${current.file.parentFile?.name ?: "Penyimpanan"}")
             Text("Diubah: ${java.util.Date(current.file.lastModified())}")
         } },
-        confirmButton = { Button({ infoVisible = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } }
+        confirmButton = { ConfirmButton("Tutup") { infoVisible = false } }
     )
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
