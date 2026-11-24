@@ -58,6 +58,7 @@ import java.util.zip.ZipFile
 @Composable
 fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
     val ctx = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var pin by remember { mutableStateOf("") }
     var first by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf("") }
@@ -89,6 +90,7 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
                         val (valid, wait) = withContext(Dispatchers.IO) { val ok = pm.verify(entered); ok to pm.lockRemainingMs() }
                         checking = false
                         if (valid) onUnlocked() else {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             error = if (wait > 0) "Terlalu banyak percobaan. Coba lagi dalam ${(wait + 999) / 1000} detik" else "PIN salah, coba lagi"
                             pin = ""
                         }
@@ -103,13 +105,18 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
                         onUnlocked()
                     }
                 }
-                else -> { error = "PIN tidak sama"; first = null; pin = "" }
+                else -> { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); error = "PIN tidak sama"; first = null; pin = "" }
             }
         }
     }
-    Column(Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Image(painterResource(R.drawable.logo_full_white), "Logo Dhika", Modifier.width(240.dp))
-        Spacer(Modifier.height(8.dp)); Text("Dhika App", fontSize = 14.sp, color = Muted)
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF152C50), Color(0xFF0D192D), Bg)))) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(Modifier.size(104.dp).clip(RoundedCornerShape(30.dp)).background(Color(0x332F7BFF)).border(1.dp, Color(0x665F9BFF), RoundedCornerShape(30.dp)), contentAlignment = Alignment.Center) {
+            Image(painterResource(R.drawable.logo_full_white), "Logo Dhika", Modifier.fillMaxWidth(0.82f))
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("DHIKA APP", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 2.sp)
+        Spacer(Modifier.height(6.dp))
         Text(title, color = Muted)
         Row(Modifier.padding(vertical = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             repeat(4) { Box(Modifier.size(14.dp).clip(CircleShape).border(2.dp, Accent, CircleShape).background(if (it < pin.length) Accent else androidx.compose.ui.graphics.Color.Transparent)) }
@@ -128,7 +135,7 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
         }
         if (!setup && pm.biometric && canBio) TextButton(onClick = ::bio) { Icon(Icons.Default.Fingerprint, null); Text(" Gunakan biometrik") }
     }
-}
+    }
 
 /* ---------- THUMBNAIL (didekripsi dari thumbnail terenkripsi) ---------- */
 /** Mengingat tab terakhir yang dibuka per folder, supaya tidak kembali ke "Foto" setelah menutup viewer. */
@@ -169,7 +176,8 @@ private fun Modifier.bouncyClick(onClick: () -> Unit, onLongClick: (() -> Unit)?
 private fun PinKey(onClick: () -> Unit, content: @Composable () -> Unit) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(
-        Modifier.size(72.dp).clip(CircleShape).background(Card)
+        Modifier.size(72.dp).clip(CircleShape).background(Color(0xFF243B63))
+            .border(1.dp, Color(0x665F9BFF), CircleShape)
             .bouncyClick(onClick = {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 onClick()
