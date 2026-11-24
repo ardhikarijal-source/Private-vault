@@ -147,7 +147,16 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
                         MediaType.COMIC -> CbzReader(plain,
                             onInteraction = { controlsVisible = false },
                             controlsVisible = controlsVisible,
-                            onToggleControls = { controlsVisible = !controlsVisible })
+                            onToggleControls = { controlsVisible = !controlsVisible },
+                            onSetCover = { entry ->
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { repo.setComicCover(current, entry) }
+                                    android.widget.Toast.makeText(ctx,
+                                        if (ok) "Sampul CBZ berhasil diperbarui" else "Gagal menyimpan sampul CBZ",
+                                        android.widget.Toast.LENGTH_SHORT).show()
+                                    if (ok) onChanged()
+                                }
+                            })
                         null -> Unit
                     }
                 } else Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -528,8 +537,10 @@ fun CbzReader(
     fullscreen: Boolean = false,
     onInteraction: () -> Unit = {},
     controlsVisible: Boolean = true,
-    onToggleControls: () -> Unit = {}
+    onToggleControls: () -> Unit = {},
+    onSetCover: (String) -> Unit = {}
 ) {
+    var coverCandidate by remember(file) { mutableStateOf<String?>(null) }
     val names = remember(file) {
         runCatching {
             ZipFile(file).use { z ->
@@ -581,12 +592,16 @@ fun CbzReader(
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 items(names.size, key = { names[it] }) { index ->
-                    CbzPage(file, names[index], index, vertical = true)
+                    Box(Modifier.fillMaxWidth().pointerInput(names[index]) {
+                        detectTapGestures(onLongPress = { coverCandidate = names[index] })
+                    }) { CbzPage(file, names[index], index, vertical = true) }
                 }
             }
         } else {
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !zoomed) { page ->
-                CbzPage(file, names[page], page, vertical = false)
+                Box(Modifier.fillMaxSize().pointerInput(names[page]) {
+                    detectTapGestures(onLongPress = { coverCandidate = names[page] })
+                }) { CbzPage(file, names[page], page, vertical = false) }
             }
         }
         }
@@ -669,6 +684,21 @@ fun CbzReader(
                 }, enabled = currentIndex < names.lastIndex) { Icon(Icons.Default.SkipNext, null, tint = Color.White) }
             }
         } }
+    }
+    coverCandidate?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { coverCandidate = null },
+            title = { Text("Jadikan sampul CBZ?") },
+            text = { Text("Gunakan gambar ini sebagai thumbnail komik?\\n${entry.substringAfterLast('/')}") },
+            confirmButton = {
+                Button(onClick = { coverCandidate = null; onSetCover(entry) },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, jadikan sampul") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { coverCandidate = null },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") }
+            }
+        )
     }
 }
 
