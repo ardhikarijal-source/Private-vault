@@ -280,7 +280,7 @@ private fun FileInfoDialog(file: VaultFile, onDismiss: () -> Unit) {
             Text("Folder: ${file.file.parentFile?.name ?: "-"}")
             Text("Diubah: ${Date(file.file.lastModified())}")
         } },
-        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
+        confirmButton = { Button(onDismiss, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } })
 }
 
 @Composable
@@ -295,7 +295,7 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
             Text("Ukuran total: ${android.text.format.Formatter.formatShortFileSize(ctx, total)}")
             Text("Dibuat/diubah: ${Date(folder.lastModified())}")
         } },
-        confirmButton = { TextButton(onDismiss) { Text("Tutup") } })
+        confirmButton = { Button(onDismiss, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } })
 }
 
 
@@ -478,23 +478,23 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     }
     if (importing && !importHidden) AlertDialog(onDismissRequest = { importHidden = true }, title = { Text("Mengimpor file") },
         text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
-        confirmButton = { TextButton({ importHidden = true }) { Text("Sembunyikan") } },
-        dismissButton = { TextButton({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
+        confirmButton = { Button({ importHidden = true }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Sembunyikan") } },
+        dismissButton = { Button({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
     if (importing && importHidden) TextButton(onClick = { importHidden = false },
         modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
     if (chooseDest) AlertDialog(onDismissRequest = { chooseDest = false }, title = { Text("Simpan ke folder") }, confirmButton = {},
-        dismissButton = { TextButton({ chooseDest = false }) { Text("Batal") } },
+        dismissButton = { Button({ chooseDest = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { folders.forEach { d ->
-            TextButton({ chooseDest = false; launchPicker(d) }, Modifier.fillMaxWidth()) { Text(d.name, maxLines = 1, modifier = Modifier.fillMaxWidth()) } } } })
+            Button({ chooseDest = false; launchPicker(d) }, Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(d.name, maxLines = 1, modifier = Modifier.fillMaxWidth()) } } } })
     if (newDialog) NameDialog("Folder Baru", "") { n -> newDialog = false; if (n != null) { if (repo.createFolder(n)) onChanged() else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
-    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
+    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { Button({ actionFile = null; infoFile = file }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Informasi") }; Button({ actionFile = null; deleteFile = file }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus") } } }, dismissButton = { Button({ actionFile = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
-    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
+    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button({ deleteFile = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } }) }
     actionFolder?.let { folder -> AlertDialog(onDismissRequest = { actionFolder = null }, title = { Text(folder.name) }, text = { Text("Pilih tindakan untuk folder ini.") }, confirmButton = { Row {
-        TextButton({ actionFolder = null; renameFolderTarget = folder }) { Text("Ganti Nama") }
-        TextButton({ actionFolder = null; infoFolder = folder }) { Text("Informasi") }
-        TextButton({ actionFolder = null; deleteFolder = folder }) { Text("Hapus") }
-    } }, dismissButton = { TextButton({ actionFolder = null }) { Text("Tutup") } }) }
+        Button({ actionFolder = null; renameFolderTarget = folder }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ganti Nama") }
+        Button({ actionFolder = null; infoFolder = folder }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Informasi") }
+        Button({ actionFolder = null; deleteFolder = folder }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus") }
+    } }, dismissButton = { Button({ actionFolder = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } }) }
     renameFolderTarget?.let { folder -> NameDialog("Ganti Nama Folder", folder.name) { name ->
         renameFolderTarget = null
         if (name != null) {
@@ -503,7 +503,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
         }
     } }
     infoFolder?.let { FolderInfoDialog(it) { infoFolder = null } }
-    deleteFolder?.let { folder -> AlertDialog(onDismissRequest = { deleteFolder = null }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = null }) { Text("Tidak") } }) }
+    deleteFolder?.let { folder -> AlertDialog(onDismissRequest = { deleteFolder = null }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button({ deleteFolder = null; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button({ deleteFolder = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } }) }
 }
 private val Color0d = androidx.compose.ui.graphics.Color(0xCC0D1527)
 
@@ -517,8 +517,8 @@ fun NameDialog(title: String, init: String, done: (String?) -> Unit) {
     var t by remember { mutableStateOf(init) }
     AlertDialog(onDismissRequest = { done(null) }, title = { Text(title) },
         text = { OutlinedTextField(t, { t = it }, singleLine = true, placeholder = { Text("Nama folder") }) },
-        confirmButton = { TextButton({ done(t.ifBlank { null }) }) { Text("Simpan") } },
-        dismissButton = { TextButton({ done(null) }) { Text("Batal") } })
+        confirmButton = { Button({ done(t.ifBlank { null }) }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Simpan") } },
+        dismissButton = { Button({ done(null) }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
 }
 
 /* ---------- FOLDER / FAVORIT ---------- */
@@ -677,24 +677,24 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     }
     if (importing && !importHidden) AlertDialog(onDismissRequest = { importHidden = true }, title = { Text("Mengimpor file") },
         text = { Column { LinearProgressIndicator(progress = { if (importTotal == 0) 0f else importDone.toFloat() / importTotal }, Modifier.fillMaxWidth()); Text("$importDone dari $importTotal file\n$importName", color = Muted) } },
-        confirmButton = { TextButton({ importHidden = true }) { Text("Sembunyikan") } },
-        dismissButton = { TextButton({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
+        confirmButton = { Button({ importHidden = true }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Sembunyikan") } },
+        dismissButton = { Button({ importCancelSignal.set(true); cancelImport = true }, enabled = !cancelImport, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (cancelImport) "Membatalkan…" else "Batal") } })
     if (importing && importHidden) TextButton(onClick = { importHidden = false },
         modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("Impor berjalan · $importDone dari $importTotal · Tampilkan") }
-    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Tidak") } })
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Konfirmasi Hapus") }, text = { Text("${sel.size} file akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button(onClick = { val selected = sel.toList(); sel.clear(); confirmDelete = false; scope.launch { withContext(Dispatchers.IO) { selected.forEach(repo::delete) }; onChanged() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button(onClick = { confirmDelete = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } })
     if (rename && folder != null) NameDialog("Ubah Nama", folder.name) { n -> rename = false; if (n != null) { if (repo.renameFolder(folder, n)) { onChanged(); onBack() } else android.widget.Toast.makeText(ctx, "Nama folder tidak valid atau sudah ada", android.widget.Toast.LENGTH_SHORT).show() } }
     if (moveDlg) AlertDialog({ moveDlg = false }, title = { Text("Pindahkan ke") }, confirmButton = {},
-        text = { Column { repo.folders().filter { it != folder }.forEach { d -> TextButton({
+        text = { Column { repo.folders().filter { it != folder }.forEach { d -> Button({
             val selected = sel.toList()
             moveDlg = false
             scope.launch { withContext(Dispatchers.IO) { selected.forEach { repo.move(it, d) } }; sel.clear(); onChanged() }
-        }) { Text(d.name) } } } })
-    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { TextButton({ actionFile = null; infoFile = file }) { Text("Informasi") }; TextButton({ actionFile = null; deleteFile = file }) { Text("Hapus") } } }, dismissButton = { TextButton({ actionFile = null }) { Text("Tutup") } }) }
+        }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(d.name) } } } })
+    actionFile?.let { file -> AlertDialog(onDismissRequest = { actionFile = null }, title = { Text(file.name, maxLines = 1) }, text = { Text("Pilih tindakan untuk file ini.") }, confirmButton = { Row { Button({ actionFile = null; infoFile = file }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Informasi") }; Button({ actionFile = null; deleteFile = file }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus") } } }, dismissButton = { Button({ actionFile = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tutup") } }) }
     infoFile?.let { FileInfoDialog(it) { infoFile = null } }
-    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFile = null }) { Text("Tidak") } }) }
+    deleteFile?.let { file -> AlertDialog(onDismissRequest = { deleteFile = null }, title = { Text("Hapus file?") }, text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button({ deleteFile = null; scope.launch { withContext(Dispatchers.IO) { repo.delete(file) }; onChanged() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button({ deleteFile = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } }) }
 
     if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
-    if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { TextButton({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }) { Text("Ya, hapus") } }, dismissButton = { TextButton({ deleteFolder = false }) { Text("Tidak") } })
+    if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { Button({ deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, hapus") } }, dismissButton = { Button({ deleteFolder = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } })
 }
 
 /* ---------- PENGATURAN ---------- */
@@ -770,11 +770,11 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(old, { if (it.length <= 4) old = it }, label = { Text("PIN lama") }, singleLine = true, keyboardOptions = kb, visualTransformation = hide)
                 OutlinedTextField(new, { if (it.length <= 4) new = it }, label = { Text("PIN baru (4 digit)") }, singleLine = true, keyboardOptions = kb, visualTransformation = hide) } },
-            confirmButton = { TextButton({
+            confirmButton = { Button({
                 val ok = pm.changePin(old, new)
                 android.widget.Toast.makeText(ctx, if (ok) "PIN diubah" else "PIN lama salah / PIN baru tidak valid", android.widget.Toast.LENGTH_SHORT).show()
-                if (ok) pinDlg = false }) { Text("Simpan") } },
-            dismissButton = { TextButton({ pinDlg = false }) { Text("Batal") } })
+                if (ok) pinDlg = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Simpan") } },
+            dismissButton = { Button({ pinDlg = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
     }
 }
 
@@ -812,8 +812,8 @@ fun TrashScreen(repo: VaultRepository, onBack: () -> Unit, onChanged: () -> Unit
             }
         } }
     }
-    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { TextButton(onClick = { repo.permanentlyDelete(item); selected.remove(item.file.absolutePath); confirm = null; version++ }) { Text("Ya") } }, dismissButton = { TextButton(onClick = { confirm = null }) { Text("Tidak") } }) }
+    confirm?.let { item -> AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Hapus permanen?") }, text = { Text("File tidak dapat dipulihkan setelah dihapus permanen.") }, confirmButton = { Button(onClick = { repo.permanentlyDelete(item); selected.remove(item.file.absolutePath); confirm = null; version++ }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya") } }, dismissButton = { Button(onClick = { confirm = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") } }) }
     if (confirmBulk) AlertDialog(onDismissRequest = { confirmBulk = false }, title = { Text("Hapus beberapa file?") }, text = { Text("${selected.size} file akan dihapus permanen dan tidak dapat dipulihkan.") },
-        confirmButton = { TextButton(onClick = { val paths = selected.toSet(); items.filter { it.file.absolutePath in paths }.forEach(repo::permanentlyDelete); selected.clear(); confirmBulk = false; version++ }) { Text("Hapus permanen") } },
-        dismissButton = { TextButton(onClick = { confirmBulk = false }) { Text("Batal") } })
+        confirmButton = { Button(onClick = { val paths = selected.toSet(); items.filter { it.file.absolutePath in paths }.forEach(repo::permanentlyDelete); selected.clear(); confirmBulk = false; version++ }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Hapus permanen") } },
+        dismissButton = { Button(onClick = { confirmBulk = false }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
 }
