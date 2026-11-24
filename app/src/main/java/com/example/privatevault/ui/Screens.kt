@@ -574,6 +574,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
+    var selMenu by remember { mutableStateOf(false) }
     var sortMode by remember(tabKey) { mutableStateOf(SortMemory.get(tabKey)) }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
@@ -632,34 +633,49 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         topBar = { TopAppBar(title = { Text(if (sel.isNotEmpty()) "${sel.size} dipilih" else if (rootFiles) "Di Luar Folder" else folder?.name ?: "Favorit") },
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
-                Box {
-                    IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.Sort, "Urutkan") }
-                    DropdownMenu(sortMenu, { sortMenu = false }) {
-                        listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
-                            DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = {
-                                sortMode = mode
-                                SortMemory.set(tabKey, mode)
-                                if (mode == "Jenis file") { tab = null; TabMemory.set(tabKey, null) }
-                                sortMenu = false
-                            })
+                if (sel.isEmpty()) {
+                    Box {
+                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.Sort, "Urutkan") }
+                        DropdownMenu(sortMenu, { sortMenu = false }) {
+                            listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
+                                DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = {
+                                    sortMode = mode
+                                    SortMemory.set(tabKey, mode)
+                                    if (mode == "Jenis file") { tab = null; TabMemory.set(tabKey, null) }
+                                    sortMenu = false
+                                })
+                            }
+                        }
+                    }
+                    if (folder != null) Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Tindakan folder") }
+                        DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(text = { Text("Ubah Nama") }, onClick = { menu = false; rename = true })
+                            DropdownMenuItem(text = { Text("Informasi Folder") }, onClick = { menu = false; infoFolder = true })
+                            DropdownMenuItem(text = { Text("Hapus Folder") }, onClick = { menu = false; deleteFolder = true })
+                        }
+                    }
+                } else {
+                    val inFav = folder == null && !rootFiles
+                    IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
+                    IconButton(onClick = { sel.forEach { repo.setFav(it, !inFav) }; sel.clear(); onChanged() }) {
+                        Icon(if (inFav) Icons.Default.FavoriteBorder else Icons.Default.Favorite, if (inFav) "Hapus dari favorit" else "Favorit")
+                    }
+                    Box {
+                        IconButton(onClick = { selMenu = true }) { Icon(Icons.Default.MoreVert, "Tindakan lain") }
+                        DropdownMenu(selMenu, { selMenu = false }) {
+                            DropdownMenuItem(text = { Text("Pindahkan ke folder") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) },
+                                onClick = { selMenu = false; moveDlg = true })
+                            if (folder != null) DropdownMenuItem(text = { Text("Salin") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                                onClick = { selMenu = false; onClipboardChange(sel.toList()); sel.clear() })
+                            DropdownMenuItem(text = { Text("Keluarkan file") }, leadingIcon = { Icon(Icons.Default.FileDownload, null) },
+                                onClick = { selMenu = false; val chosen = sel.toList(); sel.clear(); exportFiles(chosen) })
+                            DropdownMenuItem(text = { Text("Pindahkan ke Sampah", color = Color(0xFFFF6B73)) },
+                                leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6B73)) },
+                                onClick = { selMenu = false; confirmDelete = true })
                         }
                     }
                 }
-                if (sel.size == 1 && sel.first().type == MediaType.COMIC) {
-                }
-                if (sel.isNotEmpty()) IconButton(onClick = { sel.clear(); sel.addAll(items) }) { Icon(Icons.Default.SelectAll, "Pilih semua") }
-                if (sel.isNotEmpty()) IconButton(onClick = { val chosen = sel.toList(); sel.clear(); exportFiles(chosen) }) { Icon(Icons.Default.FileDownload, "Keluarkan file") }
-                if ((folder == null || rootFiles) && sel.isNotEmpty()) {
-                    IconButton(onClick = { moveDlg = true }) { Icon(Icons.Default.DriveFileMove, "Pindahkan ke folder") }
-                    IconButton(onClick = { sel.forEach { repo.setFav(it, true) }; sel.clear(); onChanged() }) { Icon(Icons.Default.Favorite, "Favorit") }
-                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Pindahkan ke Sampah") }
-                }
-                if (folder != null) Box { IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, null) }
-                    DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem({ Text("Ubah Nama") }, { menu = false; rename = true })
-                        DropdownMenuItem({ Text("Informasi Folder") }, { menu = false; infoFolder = true })
-                        DropdownMenuItem({ Text("Hapus Folder") }, { menu = false; deleteFolder = true })
-                    } }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) },
         floatingActionButton = { if (folder != null || rootFiles) ExtendedFloatingActionButton(
             onClick = { ExternalFlow.active = true; picker.launch(arrayOf("*/*")) },
@@ -675,30 +691,18 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                 NavigationBarItem(rootFiles, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
                 NavigationBarItem(!rootFiles, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
-            } else if (folder != null && (sel.isNotEmpty() || clipboard.isNotEmpty())) BottomAppBar(containerColor = Color0d) {
-                if (sel.isNotEmpty()) {
-                    listOf(
-                        Triple("Pindahkan", Icons.Default.DriveFileMove) { moveDlg = true },
-                        Triple("Salin", Icons.Default.ContentCopy) { onClipboardChange(sel.toList()); sel.clear() },
-                        Triple("Hapus", Icons.Default.Delete) { confirmDelete = true }
-                    ).forEach { (label, icon, action) ->
-                        TextButton(action, Modifier.weight(1f)) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(icon, null); Text(label, fontSize = 11.sp) }
-                        }
+            } else if (folder != null && sel.isEmpty() && clipboard.isNotEmpty()) BottomAppBar(containerColor = Color0d) {
+                TextButton(onClick = {
+                    val pending = clipboard.toList()
+                    scope.launch {
+                        withContext(Dispatchers.IO) { pending.forEach { repo.copy(it, folder) } }
+                        onClipboardChange(emptyList())
+                        onChanged()
                     }
-                } else {
-                    TextButton(onClick = {
-                        val pending = clipboard.toList()
-                        scope.launch {
-                            withContext(Dispatchers.IO) { pending.forEach { repo.copy(it, folder) } }
-                            onClipboardChange(emptyList())
-                            onChanged()
-                        }
-                    }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.ContentPaste, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Tempel " + clipboard.size + " file")
-                    }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.ContentPaste, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Tempel " + clipboard.size + " file")
                 }
             }
         }) { pad ->

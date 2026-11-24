@@ -11,6 +11,8 @@ import android.widget.Toast
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
@@ -130,8 +132,10 @@ class MainActivity : FragmentActivity() {
                         containerColor = androidx.compose.ui.graphics.Color(0xFF0B1220),
                         bottomBar = {
                             if (rootTab) NavigationBar(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                containerColor = androidx.compose.ui.graphics.Color(0xCC0D1527)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(26.dp))
+                                    .border(1.dp, androidx.compose.ui.graphics.Color(0x665F79A8), androidx.compose.foundation.shape.RoundedCornerShape(26.dp)),
+                                containerColor = androidx.compose.ui.graphics.Color(0xFF0D1527)
                             ) {
                                 NavigationBarItem(screen == Screen.Home, { screen = Screen.Home }, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
                                 NavigationBarItem(screen == Screen.RootFiles, { screen = Screen.RootFiles }, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
