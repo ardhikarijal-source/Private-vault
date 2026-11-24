@@ -351,10 +351,50 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 }
 
 
+
+/* ---------- SEARCH RESULTS ---------- */
+@Composable
+fun SearchScreen(
+    query: String,
+    results: List<VaultFile>,
+    repo: VaultRepository,
+    onBack: () -> Unit,
+    onFile: (VaultFile, List<VaultFile>) -> Unit
+) {
+    val state = rememberLazyGridState()
+    var selection by remember(query) { mutableStateOf<VaultFile?>(null) }
+    Scaffold(containerColor = Bg, topBar = {
+        TopAppBar(
+            title = { Column { Text("Hasil pencarian"); Text("\"$query\" · ${results.size} file", color = Muted, fontSize = 11.sp) } },
+            navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)
+        )
+    }) { pad ->
+        if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(pad), Alignment.Center) {
+            Text("Tidak ada file yang cocok dengan \"$query\".", color = Muted)
+        } else Box(Modifier.fillMaxSize().padding(pad)) {
+            LazyVerticalGrid(
+                state = state,
+                columns = GridCells.Adaptive(minSize = 104.dp),
+                contentPadding = PaddingValues(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(results, key = { it.file.absolutePath }) { file ->
+                    Thumb(repo, file, onLongClick = { selection = file }) {
+                        if (selection != null) selection = if (selection == file) null else file
+                        else onFile(file, results)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /* ---------- HOME ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true, onSearch: (String, List<VaultFile>) -> Unit = { _, _ -> }) {
     // Baca daftar file di thread IO (bukan di main thread); data lama tetap tampil selama memuat ulang.
     val home by produceState<HomeData?>(null, version) {
         value = withContext(Dispatchers.IO) {
@@ -465,8 +505,13 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                 }
             }
             item { OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Cari file…") }, leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Default.Close, "Hapus pencarian") } },
+                trailingIcon = {
+                    if (q.isNotBlank()) IconButton({ onSearch(q.trim(), all.filter { file -> file.name.contains(q.trim(), true) }) }) { Icon(Icons.Default.ArrowForward, "Cari file") }
+                    else Icon(Icons.Default.Search, null, tint = Muted)
+                },
                 singleLine = true, shape = RoundedCornerShape(18.dp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { if (q.isNotBlank()) onSearch(q.trim(), all.filter { file -> file.name.contains(q.trim(), true) }) }),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, unfocusedBorderColor = Line, focusedContainerColor = Card, unfocusedContainerColor = Card)) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
