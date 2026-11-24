@@ -448,12 +448,42 @@ class VaultRepository(private val ctx: Context) {
     fun thumbRevision(f: VaultFile): Long = thumbFile(f.file).lastModified()
 
     fun thumb(f: VaultFile): Bitmap? {
-        val cached = thumbMem.get(f.file.absolutePath)
-        if (cached != null) return cached
+        val key = f.file.absolutePath
+        thumbMem.get(key)?.let { return it }
         val tf = thumbFile(f.file)
-        if (!tf.isFile) return null // tidak ada thumbnail: lewati tanpa inisialisasi enkripsi
-        return runCatching { decodeThumb(enc(tf).openFileInput().use { it.readBytes() }) }.getOrNull()
-            ?.also { thumbMem.put(f.file.absolutePath, it) }
+        val existing = if (tf.isFile) runCatching {
+            decodeThumb(enc(tf).openFileInput().use { it.readBytes() })
+        }.getOrNull() else null
+        if (existing != null) {
+            thumbMem.put(key, existing)
+            return existing
+        }
+
+        // Thumbnail lama yang hilang/rusak dibuat ulang dari file terenkripsi.
+        // Ini juga memperbaiki CBZ/video yang sebelumnya hanya menampilkan ikon.
+        val plain = File(cache, "thumb_src_${System.nanoTime()}_${f.name}")
+        var bitmap: Bitmap? = null
+        try {
+            decryptTo(f.file, plain)
+            bitmap = makeThumb(plain)
+            if (bitmap != null) {
+                val encoded = File(cache, "thumb_out_${System.nanoTime()}.jpg")
+                val staged = File(tf.parentFile, ".${tf.name}.${System.nanoTime()}.new")
+                try {
+                    encoded.outputStream().use { out ->
+                        if (!bitmap!!.compress(Bitmap.CompressFormat.JPEG, 80, out)) throw IOException("Gagal membuat thumbnail")
+                    }
+                    encryptFrom(encoded, staged)
+                    if (tf.exists()) tf.delete()
+                    if (!staged.renameTo(tf)) throw IOException("Gagal menyimpan thumbnail")
+                    tf.setLastModified(System.currentTimeMillis())
+                    thumbMem.put(key, bitmap!!)
+                } finally { encoded.delete(); staged.delete() }
+            }
+        } catch (_: Exception) {
+            // File tetap dapat dibuka walau format sumber tidak menyediakan frame thumbnail.
+        } finally { plain.delete() }
+        return bitmap
     }
 
     private fun decodeThumb(bytes: ByteArray): Bitmap? = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
@@ -506,7 +536,27 @@ class VaultRepository(private val ctx: Context) {
         MediaType.VIDEO -> MediaMetadataRetriever().run {
             try {
                 setDataSource(plain.path)
-                (getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: getFrameAtTime(0))?.let { scaleDown(it) }
+                // Beberapa video memiliki intro hitam. Coba beberapa timestamp dan pilih
+                // frame yang benar-benar berisi gambar, bukan thumbnail hitam.
+                val durationUs = runCatching { extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong()?.times(1_000L) }.getOrNull() ?: 0L
+                val candidates = listOf(1_000_000L, 3_000_000L, 5_000_000L, durationUs / 3, 0L)
+                    .filter { it >= 0L && (durationUs <= 0L || it < durationUs) }.distinct()
+                var chosen: Bitmap? = null
+                for (time in candidates) {
+                    val frame = runCatching { getFrameAtTime(time, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) }.getOrNull() ?: continue
+                    var total = 0L
+                    val stepX = (frame.width / 8).coerceAtLeast(1)
+                    val stepY = (frame.height / 8).coerceAtLeast(1)
+                    var samples = 0
+                    for (y in 0 until frame.height step stepY) for (x in 0 until frame.width step stepX) {
+                        val color = frame.getPixel(x, y)
+                        total += ((android.graphics.Color.red(color) + android.graphics.Color.green(color) + android.graphics.Color.blue(color)) / 3)
+                        samples++
+                    }
+                    val brightness = if (samples == 0) 0L else total / samples
+                    if (brightness > 12L) { chosen = frame; break } else frame.recycle()
+                }
+                chosen?.let { scaleDown(it) }
             } finally { release() }
         }
         MediaType.COMIC -> ZipFile(plain).use { z ->
