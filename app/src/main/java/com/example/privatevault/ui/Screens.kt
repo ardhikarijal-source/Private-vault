@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
@@ -150,6 +151,13 @@ private object SortMemory {
     private val map = mutableMapOf<String, String>()
     fun get(key: String): String = map[key] ?: "Terbaru"
     fun set(key: String, mode: String) { map[key] = mode }
+}
+
+/** Posisi scroll tiap folder/tab dipertahankan saat pengguna berpindah menu. */
+private object GridScrollMemory {
+    private val positions = mutableMapOf<String, Pair<Int, Int>>()
+    fun get(key: String): Pair<Int, Int> = positions[key] ?: (0 to 0)
+    fun set(key: String, index: Int, offset: Int) { positions[key] = index.coerceAtLeast(0) to offset.coerceAtLeast(0) }
 }
 
 /** Urutan kelompok ekstensi; WebP dan GIF sengaja ditempatkan paling atas. */
@@ -620,7 +628,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             listOf(MediaType.PHOTO, MediaType.VIDEO, MediaType.COMIC).firstOrNull { (tabCounts[it] ?: 0) > 0 }?.let { tab = it; TabMemory.set(tabKey, it) }
         }
     }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialScrollIndex, initialFirstVisibleItemScrollOffset = initialScrollOffset)
+    val savedGridPosition = GridScrollMemory.get(tabKey)
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = if (savedGridPosition.first > 0 || savedGridPosition.second > 0) savedGridPosition.first else initialScrollIndex,
+        initialFirstVisibleItemScrollOffset = if (savedGridPosition.first > 0 || savedGridPosition.second > 0) savedGridPosition.second else initialScrollOffset
+    )
+    LaunchedEffect(gridState, tabKey) {
+        androidx.compose.runtime.snapshotFlow { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) -> GridScrollMemory.set(tabKey, index, offset) }
+    }
     val ctx = LocalContext.current
     val removeOriginals = rememberOriginalsRemover()
     val exportFiles = rememberExportUi(repo, onChanged)
@@ -735,17 +751,47 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         Column(Modifier.padding(pad)) {
             MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
-            LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(items, key = { it.file.absolutePath }) { f ->
-                    Thumb(repo, f,
-                        selected = if (sel.isNotEmpty()) sel.contains(f) else null,
-                        onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) },
-                        onLongClick = { if (!sel.contains(f)) sel.add(f) }
-                    ) {
-                        if (sel.isNotEmpty()) {
-                            if (sel.contains(f)) sel.remove(f) else sel.add(f)
-                        } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+            Box(Modifier.fillMaxSize()) {
+                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 18.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(items, key = { it.file.absolutePath }) { f ->
+                        Thumb(repo, f,
+                            selected = if (sel.isNotEmpty()) sel.contains(f) else null,
+                            onToggle = { if (sel.contains(f)) sel.remove(f) else sel.add(f) },
+                            onLongClick = { if (!sel.contains(f)) sel.add(f) }
+                        ) {
+                            if (sel.isNotEmpty()) {
+                                if (sel.contains(f)) sel.remove(f) else sel.add(f)
+                            } else onFile(f, items, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                        }
                     }
+                }
+                if (items.size > 12) Canvas(
+                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
+                        .padding(top = 8.dp, bottom = 92.dp)
+                        .pointerInput(gridState, items.size) {
+                            detectDragGestures(
+                                onDragStart = { p ->
+                                    val fraction = (p.y / size.height).coerceIn(0f, 1f)
+                                    scope.launch { gridState.scrollToItem((fraction * (items.size - 1)).toInt().coerceIn(0, items.lastIndex)) }
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val fraction = (change.position.y / size.height).coerceIn(0f, 1f)
+                                    scope.launch { gridState.scrollToItem((fraction * (items.size - 1)).toInt().coerceIn(0, items.lastIndex)) }
+                                }
+                            )
+                        }
+                ) {
+                    val info = gridState.layoutInfo
+                    val total = info.totalItemsCount.coerceAtLeast(1)
+                    val visible = info.visibleItemsInfo.size.coerceAtLeast(1)
+                    val thumbHeight = (size.height * visible / total).coerceIn(28.dp.toPx(), size.height)
+                    val fraction = gridState.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)
+                    val y = (size.height - thumbHeight) * fraction.coerceIn(0f, 1f)
+                    drawRoundRect(Color(0x556F83A8), Offset(size.width / 2 - 2.dp.toPx(), 0f),
+                        androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
+                    drawRoundRect(Accent, Offset(size.width / 2 - 3.dp.toPx(), y),
+                        androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbHeight), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
                 }
             }
         }
