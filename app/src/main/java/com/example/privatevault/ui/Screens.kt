@@ -361,6 +361,7 @@ private object SearchScrollMemory {
 }
 
 /* ---------- SEARCH RESULTS ---------- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     query: String,
