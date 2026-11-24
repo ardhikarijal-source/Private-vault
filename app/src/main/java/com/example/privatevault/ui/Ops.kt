@@ -54,12 +54,15 @@ object Ops {
     var detail by mutableStateOf("")
         private set
     var result by mutableStateOf<String?>(null)
+    var progressVisible by mutableStateOf(true)
 
     val running: Boolean get() = title != null
+    fun hideProgress() { progressVisible = false }
+    fun showProgress() { progressVisible = true }
 
     fun start(title: String, onDone: () -> Unit = {}, block: suspend (report: (Float, String) -> Unit) -> String) {
         if (running) return
-        this.title = title; progress = 0f; detail = ""; result = null
+        this.title = title; progress = 0f; detail = ""; result = null; progressVisible = true
         job = scope.launch {
             val message = try {
                 block { p, d -> progress = p.coerceIn(0f, 1f); detail = d }
@@ -108,7 +111,7 @@ fun rememberExportUi(repo: VaultRepository, onChanged: () -> Unit = {}): (List<V
                                 (if (result.cancelled) " Proses dibatalkan; file yang belum diproses tetap di brankas." else "")
                         }
                     }
-                }) { Text("Pindahkan") }
+                }, modifier = Modifier.weight(1f), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Pindahkan") }
             },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Batal") } }
         )
@@ -128,8 +131,13 @@ fun OpsHost() {
         view.keepScreenOn = title != null // jaga layar tetap menyala selama backup/pemulihan
         onDispose { view.keepScreenOn = false }
     }
-    if (title != null) {
-        AlertDialog(onDismissRequest = {}, title = { Text(title) },
+    if (title != null && Ops.progressVisible) {
+        AlertDialog(onDismissRequest = {}, title = {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f))
+                IconButton(onClick = { Ops.hideProgress() }) { Icon(Icons.Default.Close, "Sembunyikan") }
+            }
+        },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     LinearProgressIndicator(progress = { Ops.progress }, modifier = Modifier.fillMaxWidth(), color = Accent)
@@ -137,11 +145,37 @@ fun OpsHost() {
                     Text("Jangan tutup aplikasi sampai selesai.", color = Muted, fontSize = 12.sp)
                 }
             },
-            confirmButton = {},
-            dismissButton = { TextButton({ Ops.cancel() }) { Text("Batalkan") } })
+            confirmButton = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { Ops.cancel() }, modifier = Modifier.weight(1f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batalkan") }
+                    Button(onClick = { Ops.hideProgress() }, modifier = Modifier.weight(1f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Sembunyikan") }
+                }
+            },
+            dismissButton = {})
+    } else if (title != null) {
+        Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
+            Surface(
+                onClick = { Ops.showProgress() },
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(progress = { Ops.progress }, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("Proses berjalan · Tampilkan progres", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+                }
+            }
+        }
     } else if (result != null) {
         AlertDialog(onDismissRequest = { Ops.result = null }, title = { Text("Selesai") }, text = { Text(result) },
-            confirmButton = { TextButton({ Ops.result = null }) { Text("OK") } })
+            confirmButton = {
+                Button({ Ops.result = null }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("OK") }
+            })
     }
 }
 
@@ -170,9 +204,9 @@ private fun PasswordDialog(title: String, message: String, confirm: Boolean, don
                     pw.isEmpty() -> error = "Masukkan password"
                     else -> done(pw)
                 }
-            }) { Text(if (confirm) "Lanjut" else "Pulihkan") }
+            }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text(if (confirm) "Lanjut" else "Pulihkan") }
         },
-        dismissButton = { TextButton({ done(null) }) { Text("Batal") } })
+        dismissButton = { OutlinedButton({ done(null) }, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Batal") } })
 }
 
 class BackupUi(val startBackup: () -> Unit, val startRestore: () -> Unit)
