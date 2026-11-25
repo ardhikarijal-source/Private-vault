@@ -836,9 +836,15 @@ object CbzCache {
     private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
+    // GIF/WebP disimpan sebagai byte lokal di memori agar LazyColumn tidak membaca ulang ZIP setiap kali halaman muncul.
+    private val animatedBytes = object : android.util.LruCache<String, ByteArray>((Runtime.getRuntime().maxMemory() / 10).toInt()) {
+        override fun sizeOf(key: String, value: ByteArray): Int = value.size
+    }
     fun get(key: String): Bitmap? = cache.get(key)
     fun put(key: String, bitmap: Bitmap) { cache.put(key, bitmap) }
-    fun clear() { cache.evictAll(); VideoPositions.clear() }
+    fun getAnimated(key: String): ByteArray? = animatedBytes.get(key)
+    fun putAnimated(key: String, bytes: ByteArray) { animatedBytes.put(key, bytes) }
+    fun clear() { cache.evictAll(); animatedBytes.evictAll(); VideoPositions.clear() }
 }
 
 /** Satu ImageLoader bersama, dengan dukungan GIF animasi. */
@@ -854,17 +860,18 @@ private fun CbzPage(file: File, entryName: String, page: Int, vertical: Boolean)
     val context = LocalContext.current
     val animated = remember(entryName) { entryName.substringAfterLast('.', "").lowercase() in setOf("gif", "webp") }
     if (animated) {
-        val bytes by produceState<ByteArray?>(null, file, entryName) {
-            value = withContext(Dispatchers.IO) {
+        val bytes by produceState<ByteArray?>(null, file.absolutePath, entryName) {
+            val cacheKey = file.absolutePath + "#animated#" + entryName
+            value = CbzCache.getAnimated(cacheKey) ?: withContext(Dispatchers.IO) {
                 runCatching { ZipFile(file).use { zip ->
                     val entry = zip.getEntry(entryName) ?: return@use null
                     zip.getInputStream(entry).use { it.readBytes() }
-                } }.getOrNull()
+                } }.getOrNull()?.also { CbzCache.putAnimated(cacheKey, it) }
             }
         }
         if (bytes != null) {
             coil.compose.AsyncImage(
-                model = coil.request.ImageRequest.Builder(context).data(bytes).memoryCachePolicy(coil.request.CachePolicy.DISABLED).build(),
+                model = coil.request.ImageRequest.Builder(context).data(bytes).build(),
                 imageLoader = ViewerImages.loader(context),
                 contentDescription = "Halaman ${page + 1}",
                 modifier = if (vertical) Modifier.fillMaxWidth().wrapContentHeight().background(Color.White)
