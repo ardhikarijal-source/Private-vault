@@ -1,4 +1,608 @@
-/** Satu halaman CBZ yang sudah diekstrak ke berkas cache lokal sementara. */
+package com.example.privatevault.ui
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.view.View
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.composed
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.Player
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.example.privatevault.data.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import java.io.File
+import java.util.zip.ZipFile
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withPermit
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: Int, onBack: () -> Unit, onChanged: () -> Unit, onPageChanged: (VaultFile) -> Unit = {}) {
+    val safeFiles = remember(files) { files.ifEmpty { emptyList() } }
+    if (safeFiles.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
+    val pager = rememberPagerState(initialPage = initialIndex.coerceIn(safeFiles.indices)) { safeFiles.size }
+    var controlsVisible by remember { mutableStateOf(true) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var infoVisible by remember { mutableStateOf(false) }
+    var favorite by remember(safeFiles[pager.currentPage].file.absolutePath) { mutableStateOf(repo.isFav(safeFiles[pager.currentPage])) }
+    val current = safeFiles[pager.currentPage]
+    LaunchedEffect(pager.currentPage) { onPageChanged(safeFiles[pager.currentPage.coerceIn(0, safeFiles.lastIndex)]) }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val view = LocalView.current
+    val activity = remember(ctx) { ctx.findActivity() }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // Mode landscape: sembunyikan status bar & navigation bar agar konten penuh layar; kembalikan saat portrait/keluar.
+    LaunchedEffect(landscape) {
+        val window = activity?.window ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(window, view)
+        if (landscape) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else controller.show(WindowInsetsCompat.Type.systemBars())
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED // kembali mengikuti pengaturan sistem
+            activity?.window?.let { WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars()) }
+        }
+    }
+    val toggleOrientation = {
+        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Hapus file?") },
+        text = { Text("File akan dipindahkan ke Sampah selama 30 hari.") },
+        confirmButton = { ConfirmButton("Hapus", destructive = true) {
+            confirmDelete = false
+            scope.launch { withContext(Dispatchers.IO) { repo.delete(current) }; onChanged(); onBack() }
+        } },
+        dismissButton = { CancelButton("Batal") { confirmDelete = false } }
+    )
+    if (infoVisible) AlertDialog(
+        onDismissRequest = { infoVisible = false },
+        title = { Text("Informasi File") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Nama: ${current.name}")
+            Text("Jenis: ${current.file.extension.uppercase()}")
+            Text("Ukuran: ${android.text.format.Formatter.formatShortFileSize(LocalContext.current, current.file.length())}")
+            Text("Lokasi: ${current.file.parentFile?.name ?: "Penyimpanan"}")
+            Text("Diubah: ${java.util.Date(current.file.lastModified())}")
+        } },
+        confirmButton = { ConfirmButton("Tutup") { infoVisible = false } }
+    )
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { safeFiles[it].file.absolutePath }) { page ->
+            val f = safeFiles[page]
+            key(f.file.absolutePath) {
+                // first = sudah selesai dicoba, second = file hasil dekripsi (null jika gagal)
+                val opened by produceState<Pair<Boolean, File?>>(false to null, f.file.absolutePath) {
+                    value = true to withContext(Dispatchers.IO) { runCatching { repo.open(f) }.getOrNull() }
+                }
+                DisposableEffect(f.file.absolutePath) { onDispose { opened.second?.delete() } }
+                val plain = opened.second
+                if (plain != null) {
+                    when (f.type) {
+                        MediaType.PHOTO -> ZoomImage(plain,
+                            onInteraction = { controlsVisible = false },
+                            onTap = { controlsVisible = !controlsVisible })
+                        MediaType.VIDEO -> VideoPlayer(plain, positionKey = f.file.absolutePath, active = pager.currentPage == page,
+                            controlsVisible = controlsVisible, onControlsChange = { controlsVisible = it },
+                            landscape = landscape, onToggleOrientation = toggleOrientation)
+                        MediaType.COMIC -> CbzReader(plain,
+                            onInteraction = { controlsVisible = false },
+                            controlsVisible = controlsVisible,
+                            onToggleControls = { controlsVisible = !controlsVisible },
+                            onSetCover = { entry ->
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { repo.setComicCover(current, entry) }
+                                    android.widget.Toast.makeText(ctx,
+                                        if (ok) "Sampul CBZ berhasil diperbarui" else "Gagal menyimpan sampul CBZ",
+                                        android.widget.Toast.LENGTH_SHORT).show()
+                                    if (ok) onChanged()
+                                }
+                            })
+                        null -> Unit
+                    }
+                } else Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    if (!opened.first) CircularProgressIndicator() else Text("File tidak dapat dibuka", color = Color.White)
+                }
+            }
+        }
+        androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
+            enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Box(Modifier.fillMaxSize()) {
+                // Bayangan tipis di atas supaya tombol tetap terbaca di atas foto terang.
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(120.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xAA000000), Color.Transparent))))
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
+                ) { Icon(Icons.Default.ArrowBack, "Kembali", tint = Color.White) }
+                Row(
+                    Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                        .background(Color(0xCC111827), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        favorite = !favorite
+                        repo.setFav(current, favorite)
+                        onChanged()
+                    }) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorit", tint = if (favorite) Color(0xFFFF6685) else Color.White) }
+                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Hapus", tint = Color.White) }
+                    IconButton(onClick = { infoVisible = true }) { Icon(Icons.Default.Info, "Informasi", tint = Color.White) }
+                }
+                // Tombol putar layar (portrait <-> landscape), berguna saat rotasi otomatis di HP mati.
+                IconButton(
+                    onClick = toggleOrientation,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.CircleShape)
+                ) { Icon(Icons.Default.ScreenRotation, "Putar layar", tint = Color.White) }
+                // Penghitung file hanya untuk foto; video dan komik punya kontrol sendiri di bagian bawah.
+                if (safeFiles.size > 1 && current.type == MediaType.PHOTO) Text(
+                    "${pager.currentPage + 1} / ${safeFiles.size}",
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+                        .background(Color(0xAA101827), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                    color = Color.White, fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ZoomImage(file: File, onInteraction: () -> Unit = {}, onTap: () -> Unit = {}) {
+    var scale by remember(file) { mutableFloatStateOf(1f) }
+    var offsetX by remember(file) { mutableFloatStateOf(0f) }
+    var offsetY by remember(file) { mutableFloatStateOf(0f) }
+    val ctx = LocalContext.current
+    val request = remember(file) {
+        coil.request.ImageRequest.Builder(ctx).data(file).size(2048, 2048)
+            .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build() // jangan simpan foto brankas di cache memori
+    }
+    coil.compose.AsyncImage(
+        model = request,
+        imageLoader = ViewerImages.loader(ctx),
+        contentDescription = "Foto, cubit untuk memperbesar",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.fillMaxSize().clipToBounds()
+             .pointerInput(file) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val active = event.changes.filter { it.pressed }
+                        if (event.changes.any { (it.position - it.previousPosition).getDistance() > 1f }) onInteraction()
+                        if (active.size >= 2) {
+                            val a = active[0]; val b = active[1]
+                            val oldDx = a.previousPosition.x - b.previousPosition.x
+                            val oldDy = a.previousPosition.y - b.previousPosition.y
+                            val newDx = a.position.x - b.position.x
+                            val newDy = a.position.y - b.position.y
+                            val oldDistance = kotlin.math.sqrt(oldDx * oldDx + oldDy * oldDy)
+                            val newDistance = kotlin.math.sqrt(newDx * newDx + newDy * newDy)
+                            val zoom = if (oldDistance > 0f) newDistance / oldDistance else 1f
+                            val next = (scale * zoom).coerceIn(1f, 5f)
+                            val factor = next / scale
+                            val panX = ((a.position.x + b.position.x) - (a.previousPosition.x + b.previousPosition.x)) / 2f
+                            val panY = ((a.position.y + b.position.y) - (a.previousPosition.y + b.previousPosition.y)) / 2f
+                            scale = next
+                            val limitX = size.width.toFloat() * (scale - 1f) / 2f
+                            val limitY = size.height.toFloat() * (scale - 1f) / 2f
+                            offsetX = if (scale == 1f) 0f else (offsetX * factor + panX).coerceIn(-limitX, limitX)
+                            offsetY = if (scale == 1f) 0f else (offsetY * factor + panY).coerceIn(-limitY, limitY)
+                            event.changes.forEach { it.consume() }
+                        } else if (active.size == 1 && scale > 1f) {
+                            val change = active.first()
+                            val dx = change.position.x - change.previousPosition.x
+                            val dy = change.position.y - change.previousPosition.y
+                            val maxX = size.width.toFloat() * (scale - 1f) / 2f
+                            val maxY = size.height.toFloat() * (scale - 1f) / 2f
+                            val atHorizontalEdge = (dx > 0f && offsetX >= maxX - 1f) || (dx < 0f && offsetX <= -maxX + 1f)
+                            // Saat foto sudah mencapai tepi dan pengguna terus menggeser ke luar,
+                            // jangan konsumsi gesture agar HorizontalPager dapat berpindah foto.
+                            if (!atHorizontalEdge || kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                                offsetX = (offsetX + dx).coerceIn(-maxX, maxX)
+                                offsetY = (offsetY + dy).coerceIn(-maxY, maxY)
+                                change.consume()
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            }
+            .pointerInput(file) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onDoubleTap = {
+                        if (scale > 1f) { scale = 1f; offsetX = 0f; offsetY = 0f }
+                        else scale = 2f
+                    }
+                )
+            }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offsetX
+                translationY = offsetY
+            }
+    )
+}
+
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) { if (c is Activity) return c; c = c.baseContext }
+    return null
+}
+
+private fun formatTime(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    val h = total / 3600; val m = (total % 3600) / 60; val sec = total % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec) else String.format(java.util.Locale.US, "%02d:%02d", m, sec)
+}
+
+/** Posisi terakhir tiap video (hanya di memori) supaya dilanjutkan dari tempat terakhir ditonton. */
+private object VideoPositions {
+    private val map = HashMap<String, Long>()
+    fun get(key: String): Long? = map[key]
+    fun put(key: String, pos: Long, duration: Long) { if (duration > 0 && pos > 3_000 && pos < duration - 3_000) map[key] = pos else map.remove(key) }
+    fun clear() = map.clear()
+}
+
+/**
+ * Pemutar video dengan kontrol sendiri: putar/jeda, mundur/maju 10 dtk (juga ketuk dua kali di sisi layar),
+ * bilah geser, kecepatan 0,5x-2x, ulangi, bisukan, layar penuh/landscape, geser vertikal kiri = kecerahan,
+ * kanan = volume, dan melanjutkan dari posisi terakhir.
+ */
+@Composable
+fun VideoPlayer(
+    file: File,
+    positionKey: String,
+    active: Boolean,
+    controlsVisible: Boolean,
+    onControlsChange: (Boolean) -> Unit,
+    landscape: Boolean,
+    onToggleOrientation: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val view = LocalView.current
+    val activity = remember(ctx) { ctx.findActivity() }
+    val player = remember(file) {
+        ExoPlayer.Builder(ctx).build().apply {
+            setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+            VideoPositions.get(positionKey)?.let { seekTo(it) }
+            prepare()
+            playWhenReady = active
+        }
+    }
+    var isPlaying by remember { mutableStateOf(false) }
+    var ended by remember { mutableStateOf(false) }
+    var buffering by remember { mutableStateOf(false) }
+    var position by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var loop by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(false) }
+    var speedMenu by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableFloatStateOf(0f) }
+    var interaction by remember { mutableIntStateOf(0) }
+    var seekShown by remember { mutableStateOf(false) }
+    var seekForward by remember { mutableStateOf(true) }
+    var seekTick by remember { mutableIntStateOf(0) }
+    var hudIcon by remember { mutableStateOf<ImageVector?>(null) }
+    var hudValue by remember { mutableFloatStateOf(0f) }
+    var hudTick by remember { mutableIntStateOf(0) }
+    val controls by rememberUpdatedState(controlsVisible)
+    val setControls by rememberUpdatedState(onControlsChange)
+
+    val audio = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager }
+    var brightness by remember {
+        mutableFloatStateOf(((activity?.window?.attributes?.screenBrightness ?: -1f).takeIf { it >= 0f }) ?: 0.5f)
+    }
+    var volumeFraction by remember {
+        mutableFloatStateOf(audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() / audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1))
+    }
+
+    fun seekBy(deltaMs: Long) {
+        val dur = player.duration
+        val target = (player.currentPosition + deltaMs).coerceAtLeast(0L).let { if (dur > 0) it.coerceAtMost(dur) else it }
+        player.seekTo(target); position = target
+    }
+    fun togglePlay() {
+        if (ended) { player.seekTo(0); player.play() } else if (player.isPlaying) player.pause() else player.play()
+        interaction++
+    }
+    fun setBrightness(v: Float) {
+        brightness = v.coerceIn(0.02f, 1f)
+        activity?.window?.let { w -> val lp = w.attributes; lp.screenBrightness = brightness; w.attributes = lp }
+        hudIcon = Icons.Default.BrightnessMedium; hudValue = brightness; hudTick++
+    }
+    fun setVolume(f: Float) {
+        volumeFraction = f.coerceIn(0f, 1f)
+        val max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, (volumeFraction * max).roundToInt(), 0)
+        hudIcon = if (volumeFraction == 0f) Icons.Default.VolumeOff else Icons.Default.VolumeUp; hudValue = volumeFraction; hudTick++
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                ended = state == Player.STATE_ENDED
+                if (state == Player.STATE_READY) duration = player.duration.coerceAtLeast(0L)
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            VideoPositions.put(positionKey, player.currentPosition, player.duration)
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { // kembalikan kecerahan layar ke pengaturan sistem
+            activity?.window?.let { w -> val lp = w.attributes; lp.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; w.attributes = lp }
+        }
+    }
+    DisposableEffect(isPlaying) { view.keepScreenOn = isPlaying; onDispose { view.keepScreenOn = false } }
+    LaunchedEffect(active) { player.playWhenReady = active }
+    LaunchedEffect(speed) { player.setPlaybackSpeed(speed) }
+    LaunchedEffect(loop) { player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF }
+    LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    LaunchedEffect(player) {
+        while (true) {
+            if (controls && !dragging) position = player.currentPosition
+            if (duration <= 0L) duration = player.duration.coerceAtLeast(0L)
+            delay(250)
+        }
+    }
+    // Kontrol hilang sendiri setelah beberapa detik saat video diputar.
+    LaunchedEffect(controls, isPlaying, dragging, interaction, speedMenu) {
+        if (controls && isPlaying && !dragging && !speedMenu) { delay(3500); setControls(false) }
+    }
+    LaunchedEffect(seekTick) { if (seekTick > 0) { seekShown = true; delay(600); seekShown = false } }
+    LaunchedEffect(hudTick) { if (hudTick > 0) { delay(900); hudIcon = null } }
+    // Jangan biarkan suara video terus berjalan saat aplikasi ke background / terkunci.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) player.pause() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView({ PlayerView(it).apply {
+            this.player = player
+            useController = false
+            setShutterBackgroundColor(android.graphics.Color.BLACK)
+        } }, Modifier.fillMaxSize())
+
+        // Lapisan gestur: ketuk = tampil/sembunyi kontrol, ketuk dua kali = loncat 10 dtk, geser vertikal = kecerahan/volume.
+        Box(Modifier.fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { setControls(!controls) },
+                    onDoubleTap = { offset ->
+                        val forward = offset.x > size.width / 2f
+                        seekBy(if (forward) 10_000L else -10_000L)
+                        seekForward = forward; seekTick++
+                    })
+            }
+            .pointerInput(Unit) {
+                var leftSide = true
+                detectVerticalDragGestures(
+                    onDragStart = { leftSide = it.x < size.width / 2f },
+                    onVerticalDrag = { change, dy ->
+                        change.consume()
+                        val delta = -dy / size.height * 1.2f
+                        if (leftSide) setBrightness(brightness + delta) else setVolume(volumeFraction + delta)
+                    })
+            })
+
+        if (seekShown) Row(
+            Modifier.align(if (seekForward) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 40.dp)
+                .background(Color(0x99000000), androidx.compose.foundation.shape.CircleShape).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(if (seekForward) Icons.Default.Forward10 else Icons.Default.Replay10, null, tint = Color.White)
+            Spacer(Modifier.width(6.dp))
+            Text(if (seekForward) "+10 dtk" else "-10 dtk", color = Color.White, fontSize = 13.sp)
+        }
+        hudIcon?.let { icon ->
+            Column(Modifier.align(Alignment.Center).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(progress = { hudValue }, modifier = Modifier.width(96.dp), color = Accent, trackColor = Color(0x55FFFFFF))
+            }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(controlsVisible, Modifier.fillMaxSize(),
+            enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(170.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+                Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton({ seekBy(-10_000L); interaction++ }, Modifier.size(52.dp)) { Icon(Icons.Default.Replay10, "Mundur 10 detik", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                    Box(Modifier.size(68.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x99101827)).clickable { togglePlay() }, contentAlignment = Alignment.Center) {
+                        if (buffering && !isPlaying) CircularProgressIndicator(Modifier.size(32.dp), color = Color.White, strokeWidth = 3.dp)
+                        else Icon(if (ended) Icons.Default.Replay else if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Putar atau jeda", tint = Color.White, modifier = Modifier.size(40.dp))
+                    }
+                    IconButton({ seekBy(10_000L); interaction++ }, Modifier.size(52.dp)) { Icon(Icons.Default.Forward10, "Maju 10 detik", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    val maxPos = duration.coerceAtLeast(1L).toFloat()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(formatTime(if (dragging) dragValue.toLong() else position), color = Color.White, fontSize = 12.sp)
+                        Slider(
+                            value = (if (dragging) dragValue else position.toFloat()).coerceIn(0f, maxPos),
+                            onValueChange = { dragging = true; dragValue = it },
+                            onValueChangeFinished = { player.seekTo(dragValue.toLong()); position = dragValue.toLong(); dragging = false; interaction++ },
+                            valueRange = 0f..maxPos,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFFB8CBFF), activeTrackColor = Accent, inactiveTrackColor = Color(0x66FFFFFF))
+                        )
+                        Text(formatTime(duration), color = Color.White, fontSize = 12.sp)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                TextButton({ speedMenu = true }) {
+                                    Icon(Icons.Default.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text((if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString()) + "x", color = Color.White)
+                                }
+                                DropdownMenu(speedMenu, { speedMenu = false }) {
+                                    listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
+                                        val label = (if (sp == sp.toInt().toFloat()) sp.toInt().toString() else sp.toString()) + "x"
+                                        DropdownMenuItem({ Text(if (sp == speed) "$label  ✓" else label) }, { speed = sp; speedMenu = false })
+                                    }
+                                }
+                            }
+                            IconButton({ loop = !loop; interaction++ }) { Icon(if (loop) Icons.Default.RepeatOne else Icons.Default.Repeat, "Ulangi video", tint = if (loop) Accent else Color.White) }
+                            IconButton({ muted = !muted; interaction++ }) { Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, "Bisukan", tint = Color.White) }
+                        }
+                        IconButton(onToggleOrientation) { Icon(if (landscape) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Layar penuh / landscape", tint = Color.White) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Pratinjau kecil satu halaman CBZ untuk pemilih sampul. */
+private suspend fun loadCbzThumb(file: File, entryName: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+        ZipFile(file).use { z ->
+            val entry = z.getEntry(entryName) ?: return@use null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            val longest = maxOf(bounds.outWidth, bounds.outHeight)
+            while (longest / (sample * 2) >= 320) sample *= 2
+            z.getInputStream(entry).use {
+                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                })
+            }
+        }
+    }.getOrNull()
+}
+
+@Composable
+private fun CbzCoverPicker(file: File, names: List<String>, initial: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    var selected by remember { mutableStateOf(initial) }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+        initialFirstVisibleItemIndex = (names.indexOf(initial).coerceAtLeast(0) / 3) * 3
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pilih sampul komik") },
+        text = {
+            Column {
+                Text("Ketuk halaman yang ingin dijadikan sampul.", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(10.dp))
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    state = gridState,
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxWidth().height(340.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(names.size, key = { names[it] }) { i ->
+                        val name = names[i]
+                        val bmp by produceState<Bitmap?>(null, name) { value = loadCbzThumb(file, name) }
+                        val picked = name == selected
+                        val shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                        Box(
+                            Modifier.aspectRatio(0.7f).clip(shape).background(Color(0xFF18243A))
+                                .border(if (picked) 3.dp else 1.dp, if (picked) Accent else Color(0xFF53627A), shape)
+                                .clickable { selected = name },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                                ?: CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("${i + 1}", color = Color.White, fontSize = 11.sp,
+                                modifier = Modifier.align(Alignment.BottomStart).padding(4.dp)
+                                    .background(Color(0x99000000), androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).padding(horizontal = 5.dp))
+                            if (picked) Icon(Icons.Default.CheckCircle, null, tint = Accent, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { ConfirmButton("Jadikan sampul") { onPick(selected) } },
+        dismissButton = { CancelButton("Batal") { onDismiss() } }
+    )
+}
+
+/** One page extracted from the CBZ into the app's private temporary cache. */
 @Stable
 class CbzPageInfo(val name: String, val file: File, val width: Int, val height: Int, val animated: Boolean) {
     val ratio: Float get() = if (width > 0 && height > 0) width.toFloat() / height else 0.7f
@@ -6,10 +610,6 @@ class CbzPageInfo(val name: String, val file: File, val width: Int, val height: 
 
 class CbzBook(val dir: File, val pages: List<CbzPageInfo>)
 
-/**
- * Pintu masuk pembaca CBZ. Loading HANYA terjadi sekali saat pertama dibuka: semua halaman diekstrak ke cache
- * lokal, setelah itu pembaca tetap terbuka tanpa loading ulang saat menggulir naik/turun.
- */
 @Composable
 fun CbzReader(
     file: File,
@@ -26,11 +626,13 @@ fun CbzReader(
     val book by produceState<CbzBook?>(null, file.absolutePath) {
         value = runCatching {
             withContext(Dispatchers.IO) {
-                val names = ZipFile(file).use { z -> ComicPages.pages(z) }
-                total = names.size
-                prepareCbzBook(ctx, file, names) { done = it }
+                val entries = ZipFile(file).use { zip -> ComicPages.pages(zip) }
+                total = entries.size
+                prepareCbzBook(ctx, file, entries) { done = it }
             }
-        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        }.onFailure {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+        }.getOrNull()
         finished = true
     }
     val ready = book
@@ -38,7 +640,7 @@ fun CbzReader(
         onDispose {
             if (ready != null) {
                 CbzCache.evictPrefix(ready.dir.absolutePath)
-                Thread { ready.dir.deleteRecursively() }.start()
+                ready.dir.deleteRecursively()
             }
         }
     }
@@ -76,6 +678,18 @@ private fun CbzReaderContent(
     val verticalListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
     val currentIndex = if (verticalMode) verticalListState.firstVisibleItemIndex else pager.currentPage
+
+    // Decode nearby static pages from local cache files before they enter the viewport.
+    LaunchedEffect(book, currentIndex) {
+        withContext(Dispatchers.Default) {
+            val from = (currentIndex - 2).coerceAtLeast(0)
+            val to = (currentIndex + 8).coerceAtMost(book.pages.lastIndex)
+            for (i in from..to) {
+                val page = book.pages[i]
+                if (!page.animated) loadCbzBitmap(page, page.file.absolutePath)
+            }
+        }
+    }
     val zoom = remember(file) { CbzZoom() }
     zoom.vertical = verticalMode
     val zoomed by remember(zoom) { derivedStateOf { zoom.scale > 1.001f } }
@@ -94,17 +708,6 @@ private fun CbzReaderContent(
     LaunchedEffect(pager.currentPage) {
         if (pager.currentPage != previousPage) onInteraction()
         previousPage = pager.currentPage
-    }
-    // Dekode halaman di sekitar posisi baca lebih dulu (dari berkas lokal) supaya tidak ada spinner saat menggulir.
-    LaunchedEffect(book, currentIndex) {
-        withContext(Dispatchers.Default) {
-            val from = (currentIndex - 2).coerceAtLeast(0)
-            val to = (currentIndex + 8).coerceAtMost(book.pages.lastIndex)
-            for (i in from..to) {
-                val p = book.pages[i]
-                if (!p.animated) loadCbzBitmap(p, p.file.absolutePath)
-            }
-        }
     }
     if (names.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("CBZ tidak berisi gambar atau arsip tidak dapat dibaca", color = Color.White) }
@@ -299,15 +902,16 @@ private fun Modifier.cbzZoom(z: CbzZoom, zoomed: Boolean, onTap: () -> Unit, onI
         }
 }
 
-/** Cache halaman komik (di memori saja) supaya membalik halaman tidak mendekode ulang. Dikosongkan saat aplikasi terkunci. */
+/** Memory cache for decoded CBZ pages. */
 object CbzCache {
     private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 4).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
     fun get(key: String): Bitmap? = cache.get(key)
     fun put(key: String, bitmap: Bitmap) { cache.put(key, bitmap) }
-    // Tetap diperlukan untuk membuang bitmap dari direktori buku saat pembaca ditutup.
-    fun evictPrefix(prefix: String) { cache.snapshot().keys.filter { it.startsWith(prefix) }.forEach { cache.remove(it) } }
+    fun evictPrefix(prefix: String) {
+        cache.snapshot().keys.filter { it.startsWith(prefix) }.forEach { cache.remove(it) }
+    }
     fun clear() { cache.evictAll(); VideoPositions.clear() }
 }
 
@@ -323,8 +927,7 @@ private object ViewerImages {
 private fun CbzPage(book: CbzBook, index: Int, vertical: Boolean) {
     val page = book.pages[index]
     val context = LocalContext.current
-    // Tinggi halaman sudah pasti (dari ukuran gambar asli): daftar tidak melompat saat gambar selesai dimuat.
-    val box = if (vertical) Modifier.fillMaxWidth().aspectRatio(page.ratio) else Modifier.fillMaxSize()
+    val pageModifier = if (vertical) Modifier.fillMaxWidth().aspectRatio(page.ratio) else Modifier.fillMaxSize()
     if (page.animated) {
         val request = remember(page.file) {
             coil.request.ImageRequest.Builder(context).data(page.file).crossfade(false).build()
@@ -333,27 +936,26 @@ private fun CbzPage(book: CbzBook, index: Int, vertical: Boolean) {
             model = request,
             imageLoader = ViewerImages.loader(context),
             contentDescription = "Halaman ${index + 1}",
-            modifier = box.background(Color.White),
+            modifier = pageModifier.background(Color.White),
             contentScale = if (vertical) ContentScale.FillWidth else ContentScale.Fit
         )
     } else {
         val key = page.file.absolutePath
-        // Nilai awal diambil dari cache secara sinkron, jadi halaman yang sudah pernah dimuat langsung tampil tanpa spinner.
-        val bmp by produceState<Bitmap?>(CbzCache.get(key), key) {
+        val bitmap by produceState<Bitmap?>(CbzCache.get(key), key) {
             if (value == null) value = loadCbzBitmap(page, key)
         }
-        val b = bmp
-        if (b != null) {
-            Image(b.asImageBitmap(), "Halaman ${index + 1}", box.background(Color.White),
+        if (bitmap != null) {
+            Image(bitmap!!.asImageBitmap(), "Halaman ${index + 1}", pageModifier.background(Color.White),
                 contentScale = if (vertical) ContentScale.FillWidth else ContentScale.Fit)
-        } else Box(box.background(Color(0xFF111111)))
+        } else {
+            Box(pageModifier.background(Color(0xFF111111)))
+        }
     }
 }
 
-/** Dekode satu halaman statis dari berkas lokal (hasil ekstraksi), dengan cache memori. */
 private suspend fun loadCbzBitmap(page: CbzPageInfo, key: String): Bitmap? {
     CbzCache.get(key)?.let { return it }
-    return withContext(Dispatchers.Default) {
+    return withContext(Dispatchers.IO) {
         runCatching {
             var sample = 1
             val longest = maxOf(page.width, page.height)
@@ -366,48 +968,48 @@ private suspend fun loadCbzBitmap(page: CbzPageInfo, key: String): Bitmap? {
     }
 }
 
-/**
- * Ekstrak semua halaman CBZ ke cache lokal secara paralel (4 jalur), baca ukuran tiap gambar,
- * lalu dekode beberapa halaman pertama. Dipanggil sekali saat CBZ dibuka.
- */
-private suspend fun prepareCbzBook(ctx: Context, source: File, names: List<String>, onProgress: (Int) -> Unit): CbzBook =
-    withContext(Dispatchers.IO) {
-        val root = File(ctx.cacheDir, "cbz_pages").apply { mkdirs() }
-        val now = System.currentTimeMillis()
-        root.listFiles()?.forEach { if (now - it.lastModified() > 30 * 60 * 1000L) it.deleteRecursively() }
-        val dir = File(root, "b" + System.nanoTime()).apply { mkdirs() }
-        try {
-            val done = java.util.concurrent.atomic.AtomicInteger(0)
-            val gate = Semaphore(4)
-            val pages = ZipFile(source).use { zip ->
-                coroutineScope {
-                    names.mapIndexed { i, name ->
-                        async {
-                            gate.withPermit {
-                                val entry = zip.getEntry(name)
-                                if (entry == null) {
-                                    onProgress(done.incrementAndGet())
-                                    return@withPermit null
-                                }
-                                val ext = name.substringAfterLast('.', "bin").lowercase()
-                                    .filter { it.isLetterOrDigit() }.take(5).ifEmpty { "bin" }
-                                val out = File(dir, String.format(java.util.Locale.US, "%05d.%s", i, ext))
-                                zip.getInputStream(entry).use { input ->
-                                    out.outputStream().use { o -> input.copyTo(o, 128 * 1024) }
-                                }
-                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                BitmapFactory.decodeFile(out.absolutePath, bounds)
-                                onProgress(done.incrementAndGet())
-                                CbzPageInfo(name, out, bounds.outWidth, bounds.outHeight, ext == "gif" || ext == "webp")
+private suspend fun prepareCbzBook(
+    ctx: Context,
+    source: File,
+    names: List<String>,
+    onProgress: (Int) -> Unit
+): CbzBook = withContext(Dispatchers.IO) {
+    val root = File(ctx.cacheDir, "cbz_pages").apply { mkdirs() }
+    val now = System.currentTimeMillis()
+    root.listFiles()?.forEach { if (now - it.lastModified() > 30 * 60 * 1000L) it.deleteRecursively() }
+    val dir = File(root, "b" + System.nanoTime()).apply { mkdirs() }
+    try {
+        val completed = java.util.concurrent.atomic.AtomicInteger(0)
+        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+        val pages = ZipFile(source).use { zip ->
+            kotlinx.coroutines.coroutineScope {
+                names.mapIndexed { index, name ->
+                    kotlinx.coroutines.async {
+                        semaphore.withPermit {
+                            val entry = zip.getEntry(name)
+                            if (entry == null) {
+                                onProgress(completed.incrementAndGet())
+                                return@withPermit null
                             }
+                            val ext = name.substringAfterLast('.', "bin").lowercase()
+                                .filter { it.isLetterOrDigit() }.take(5).ifEmpty { "bin" }
+                            val output = File(dir, String.format(java.util.Locale.US, "%05d.%s", index, ext))
+                            zip.getInputStream(entry).use { input ->
+                                output.outputStream().use { stream -> input.copyTo(stream, 128 * 1024) }
+                            }
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFile(output.absolutePath, bounds)
+                            onProgress(completed.incrementAndGet())
+                            CbzPageInfo(name, output, bounds.outWidth, bounds.outHeight, ext == "gif" || ext == "webp")
                         }
-                    }.awaitAll().filterNotNull()
-                }
+                    }
+                }.awaitAll().filterNotNull()
             }
-            pages.filter { !it.animated }.take(3).forEach { loadCbzBitmap(it, it.file.absolutePath) }
-            CbzBook(dir, pages)
-        } catch (e: Throwable) {
-            dir.deleteRecursively()
-            throw e
         }
+        pages.filter { !it.animated }.take(3).forEach { loadCbzBitmap(it, it.file.absolutePath) }
+        CbzBook(dir, pages)
+    } catch (error: Throwable) {
+        dir.deleteRecursively()
+        throw error
     }
+}
