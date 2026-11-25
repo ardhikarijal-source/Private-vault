@@ -272,7 +272,7 @@ private fun greetingNow(): String = when (java.util.Calendar.getInstance().get(j
 
 /** Pemilih jenis media (Foto / Video / Komik) berbentuk pil, lengkap dengan jumlah file. */
 @Composable
-private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSelect: (MediaType?) -> Unit) {
+private fun MediaTabs(selected: MediaType?, onSelect: (MediaType?) -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
             .glassSurface(RoundedCornerShape(20.dp)).padding(7.dp),
@@ -295,7 +295,6 @@ private fun MediaTabs(selected: MediaType?, counts: Map<MediaType?, Int>, onSele
                 Icon(icon, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(21.dp))
                 Text(label, color = if (active) Color.White else Muted, fontSize = 11.sp,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                Text("${counts[type] ?: 0}", color = if (active) Color(0xCCFFFFFF) else Muted, fontSize = 10.sp, maxLines = 1)
             }
         }
     }
@@ -494,7 +493,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             containerColor = Color(0xFF0D1527)
         ) {
                 NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
-                NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Image, null) }, label = { Text("Gambar") })
+                NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.FolderOpen, null) }, label = { Text("File") })
                 NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
             }
@@ -698,14 +697,16 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
     var sortSheet by remember { mutableStateOf(false) }
+    var folderSearchOpen by remember(tabKey) { mutableStateOf(false) }
+    var folderSearch by remember(tabKey) { mutableStateOf("") }
     var selMenu by remember { mutableStateOf(false) }
     var sortSpec by remember(tabKey) { mutableStateOf(SortSpec.decode(repo.sortSpecFor(tabKey))) }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
     val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() + (null to source.size) }
-    val items = remember(source, tab, sortSpec) {
+    val items = remember(source, tab, sortSpec, folderSearch) {
         val filtered = if (tab == null) source else source.filter { it.type == tab }
-        sortFiles(filtered, sortSpec) { fileTypeSortRank(it) }
+        sortFiles(filtered.filter { folderSearch.isBlank() || it.name.contains(folderSearch, ignoreCase = true) }, sortSpec) { fileTypeSortRank(it) }
     }
     // Bila tab aktif kosong tetapi tab lain berisi, pindah otomatis supaya file yang baru diunggah langsung terlihat.
     LaunchedEffect(source) {
@@ -761,7 +762,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
                 if (sel.isEmpty()) {
-                    IconButton(onClick = { sortSheet = true }) { Icon(Icons.Default.Sort, "Urutkan") }
+                    IconButton(onClick = { folderSearchOpen = !folderSearchOpen; if (!folderSearchOpen) folderSearch = "" }) { Icon(Icons.Default.Search, "Cari file di sini") }
                     if (folder != null) Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Tindakan folder") }
                         DropdownMenu(menu, { menu = false }) {
@@ -822,7 +823,18 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
         }) { pad ->
         Column(Modifier.padding(pad)) {
-            MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
+            MediaTabs(tab) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
+            if (folderSearchOpen) {
+                OutlinedTextField(
+                    value = folderSearch,
+                    onValueChange = { folderSearch = it },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                    placeholder = { Text("Cari file dalam folder…") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = { IconButton(onClick = { folderSearch = ""; folderSearchOpen = false }) { Icon(Icons.Default.Close, "Tutup pencarian") } },
+                    singleLine = true
+                )
+            }
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${items.size} file", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
                 AssistChip(
@@ -834,7 +846,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
             Box(Modifier.fillMaxSize()) {
-                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 34.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 34.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(items, key = { it.file.absolutePath }) { f ->
                         Thumb(repo, f,
                             selected = if (sel.isNotEmpty()) sel.contains(f) else null,
@@ -847,7 +859,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         }
                     }
                 }
-                FastScrollbar(gridState, items.size, Modifier.align(Alignment.CenterEnd).padding(top = 8.dp, bottom = 92.dp))
+                FastScrollbar(gridState, items.size, Modifier.align(Alignment.CenterStart).padding(top = 8.dp, bottom = 92.dp))
             }
         }
     }
