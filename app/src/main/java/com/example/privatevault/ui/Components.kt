@@ -112,13 +112,13 @@ fun FastScrollbar(
     val alpha by animateFloatAsState(if (awake || dragging) 1f else 0f, tween(220))
     val trackWidth by animateDpAsState(if (dragging) 44.dp else 30.dp, tween(150))
     val thumbWidth by animateDpAsState(if (dragging) 16.dp else 8.dp, tween(150))
-    val minThumbPx = with(density) { (if (dragging) 88.dp else 64.dp).toPx() }
+    val minThumbPx = with(density) { 72.dp.toPx() }
 
     val visibleCount = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
     val maxFirst = (totalItems - visibleCount).coerceAtLeast(1)
     val naturalFraction = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
     val fraction = if (dragging) dragFraction else naturalFraction
-    val thumbPx = (heightPx * visibleCount / totalItems).coerceAtLeast(minThumbPx).coerceAtMost(heightPx.coerceAtLeast(minThumbPx))
+    val thumbPx = minThumbPx.coerceAtMost(heightPx.coerceAtLeast(minThumbPx))
     val thumbTop = ((heightPx - thumbPx) * fraction).coerceAtLeast(0f)
     val currentIndex = (fraction * (totalItems - 1)).roundToInt().coerceIn(0, totalItems - 1)
 
@@ -153,7 +153,7 @@ fun FastScrollbar(
     ) {
         Canvas(Modifier.fillMaxSize().alpha(alpha)) {
             val tw = thumbWidth.toPx()
-            val x = size.width - tw - 6.dp.toPx()
+            val x = 6.dp.toPx()
             drawRoundRect(
                 Color(0x33FFFFFF),
                 Offset(x + tw / 2f - 2.dp.toPx(), 0f),
