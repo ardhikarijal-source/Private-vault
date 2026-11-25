@@ -86,8 +86,8 @@ fun ProgressChip(text: String, progress: Float?, onClick: () -> Unit) {
  
 
 /**
- * Scrollbar cepat di sisi kanan: area sentuh lebar (30 dp, melebar jadi 44 dp saat disentuh), gagang minimal 64 dp
- * (88 dp saat disentuh), muncul saat menggulir lalu menghilang halus, dan menampilkan penanda posisi saat diseret.
+ * Slider scroll cepat di sisi kanan. Berupa overlay di atas gambar (tidak menggeser grid): meluncur masuk dari
+ * kanan ke kiri hanya saat daftar digulir atau slider diseret, lalu meluncur keluar saat berhenti.
  * Hanya tampil untuk daftar ≥ 15 item.
  */
 @Composable
@@ -107,11 +107,14 @@ fun FastScrollbar(
     var lastTarget by remember { mutableIntStateOf(-1) }
     val scrolling = state.isScrollInProgress
     LaunchedEffect(scrolling, dragging) {
-        if (scrolling || dragging) awake = true else { delay(1600); awake = false }
+        if (scrolling || dragging) awake = true else { delay(1000); awake = false }
     }
-    val alpha by animateFloatAsState(if (awake || dragging) 1f else 0f, tween(220))
-    val trackWidth by animateDpAsState(if (dragging) 44.dp else 30.dp, tween(150))
-    val thumbWidth by animateDpAsState(if (dragging) 16.dp else 8.dp, tween(150))
+    val visible = awake || dragging
+    val trackWidth by animateDpAsState(if (dragging) 48.dp else 36.dp, tween(150), label = "trackWidth")
+    val thumbWidth by animateDpAsState(if (dragging) 14.dp else 8.dp, tween(150), label = "thumbWidth")
+    // Posisi geser: 0 = terlihat penuh, trackWidth+12dp = tersembunyi di luar tepi kanan layar.
+    val slideX by animateDpAsState(if (visible) 0.dp else trackWidth + 12.dp, tween(240), label = "slideX")
+    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(200), label = "alpha")
     val minThumbPx = with(density) { 72.dp.toPx() }
 
     val visibleCount = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
@@ -122,8 +125,12 @@ fun FastScrollbar(
     val thumbTop = ((heightPx - thumbPx) * fraction).coerceAtLeast(0f)
     val currentIndex = (fraction * (totalItems - 1)).roundToInt().coerceIn(0, totalItems - 1)
 
+    // Sudah benar-benar hilang: lepas dari komposisi agar tidak menangkap sentuhan sama sekali.
+    if (!visible && alpha == 0f) return
+
     Box(
         modifier.fillMaxHeight().width(trackWidth)
+            .offset { IntOffset(slideX.roundToPx(), 0) }
             .onSizeChanged { heightPx = it.height.toFloat() }
             .pointerInput(totalItems) {
                 awaitEachGesture {
@@ -153,19 +160,10 @@ fun FastScrollbar(
     ) {
         Canvas(Modifier.fillMaxSize().alpha(alpha)) {
             val tw = thumbWidth.toPx()
-            val x = 6.dp.toPx()
-            drawRoundRect(
-                Color(0x33FFFFFF),
-                Offset(x + tw / 2f - 2.dp.toPx(), 0f),
-                Size(4.dp.toPx(), size.height),
-                CornerRadius(2.dp.toPx())
-            )
-            drawRoundRect(
-                if (dragging) Accent else Color(0xCC8FB4FF),
-                Offset(x, thumbTop),
-                Size(tw, thumbPx),
-                CornerRadius(tw / 2f)
-            )
+            val cx = size.width - 14.dp.toPx()
+            drawRoundRect(Color(0x55000000), Offset(cx - 3.dp.toPx(), 0f), Size(6.dp.toPx(), size.height), CornerRadius(3.dp.toPx()))
+            drawRoundRect(Color(0x66000000), Offset(cx - tw / 2f - 2.dp.toPx(), thumbTop - 2.dp.toPx()), Size(tw + 4.dp.toPx(), thumbPx + 4.dp.toPx()), CornerRadius((tw + 4.dp.toPx()) / 2f))
+            drawRoundRect(if (dragging) Accent else Color(0xE68FB4FF), Offset(cx - tw / 2f, thumbTop), Size(tw, thumbPx), CornerRadius(tw / 2f))
         }
         if (dragging) Text(
             label(currentIndex), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,

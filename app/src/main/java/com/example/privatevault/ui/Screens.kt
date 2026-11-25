@@ -846,7 +846,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
             Box(Modifier.fillMaxSize()) {
-                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 34.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(items, key = { it.file.absolutePath }) { f ->
                         Thumb(repo, f,
                             selected = if (sel.isNotEmpty()) sel.contains(f) else null,
@@ -859,7 +859,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         }
                     }
                 }
-                FastScrollbar(gridState, items.size, Modifier.align(Alignment.CenterStart).padding(top = 8.dp, bottom = 92.dp))
+                FastScrollbar(gridState, items.size, Modifier.align(Alignment.CenterEnd).padding(top = 8.dp, bottom = 92.dp))
             }
         }
     }

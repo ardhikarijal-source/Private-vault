@@ -225,7 +225,7 @@ fun SearchScreen(
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         LazyVerticalGrid(
                             state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 34.dp, bottom = 24.dp),
+                            contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 24.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(results, key = { it.file.absolutePath }) { f ->
