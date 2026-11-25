@@ -169,7 +169,7 @@ class VaultRepository(private val ctx: Context) {
                 val input = ctx.contentResolver.openInputStream(uri)
                 if (input == null) { skipped++; return@forEachIndexed }
                 input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
-                val dest = store(tmp, folder, name, cover.ifEmpty { null }); n++
+                val dest = store(tmp, folder, name); n++
                 // Pindah, bukan salin: hapus file asli hanya jika hasil enkripsi benar-benar ada dan tidak kosong.
                 if (deleteOriginals && dest.isFile && dest.length() >= tmp.length() && dest.length() > 0) {
                     if (deleteOriginal(uri)) deleted++ else undeleted += uri
@@ -193,8 +193,6 @@ class VaultRepository(private val ctx: Context) {
             val favs = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
             if (favs.remove(f.file.absolutePath)) { favs.add(dest.absolutePath); prefs.edit { putStringSet("fav", favs) } }
             thumbMem.remove(f.file.absolutePath)
-            setCoverEntry(f.file, entryName)
-            noneMarker(f.file).delete()
             true
         } finally { plain.delete() }
     }
@@ -450,6 +448,8 @@ class VaultRepository(private val ctx: Context) {
             backup.delete()
             target.setLastModified(System.currentTimeMillis())
             thumbMem.remove(f.file.absolutePath)
+            setCoverEntry(f.file, entryName)
+            noneMarker(f.file).delete()
             true
         } catch (_: Exception) {
             if (!target.exists() && backup.exists()) backup.renameTo(target)
@@ -756,7 +756,7 @@ class VaultRepository(private val ctx: Context) {
                 if (tmp != null && folder != null) {
                     folder.mkdirs()
                     val ok = runCatching {
-                        val dest = store(tmp, folder, name)
+                        val dest = store(tmp, folder, name, cover.ifEmpty { null })
                         if (modified > 0) dest.setLastModified(modified)
                         if (fav) newFavs.add(dest.absolutePath)
                         Unit
