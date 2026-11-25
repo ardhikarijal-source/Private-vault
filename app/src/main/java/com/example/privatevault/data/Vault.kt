@@ -61,6 +61,13 @@ class VaultRepository(private val ctx: Context) {
     private fun encryptFrom(plain: File, dest: File) { enc(dest).openFileOutput().use { o -> plain.inputStream().use { it.copyTo(o) } } }
     private fun decryptTo(src: File, dest: File) { enc(src).openFileInput().use { i -> dest.outputStream().use { i.copyTo(it) } } }
     private fun thumbFile(f: File) = File(File(f.parentFile, ".thumbs").apply { mkdirs() }, f.name + ".jpg")
+    private fun noneMarker(f: File) = File(File(f.parentFile, ".thumbs").apply { mkdirs() }, f.name + ".none")
+    private fun coverKey(f: File) = "cover:" + (f.parentFile?.name ?: "") + "/" + f.name
+    /** Halaman CBZ yang dipilih pengguna sebagai sampul, atau null bila memakai sampul otomatis. */
+    fun coverOf(f: VaultFile): String? = prefs.getString(coverKey(f.file), null)
+    fun setCoverEntry(file: File, entry: String?) {
+        prefs.edit { if (entry == null) remove(coverKey(file)) else putString(coverKey(file), entry) }
+    }
 
     /** Jika aktif, file asli di perangkat dihapus setelah berhasil diamankan ke brankas (benar-benar "pindah", bukan salin). */
     var moveOriginals: Boolean
@@ -115,12 +122,13 @@ class VaultRepository(private val ctx: Context) {
     }
 
     /** Enkripsi file plain ke folder tujuan + buat thumbnail terenkripsi. */
-    private fun store(plain: File, folder: File, name: String): File {
+    private fun store(plain: File, folder: File, name: String, coverEntry: String? = null): File {
         val dest = unique(folder, name)
-        runCatching { makeThumb(plain)?.let { bmp ->
+        runCatching { makeThumb(plain, coverEntry)?.let { bmp ->
             val t = File(cache, "t_${System.nanoTime()}.jpg")
             t.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }
             encryptFrom(t, thumbFile(dest)); t.delete() } }
+        if (coverEntry != null) setCoverEntry(dest, coverEntry)
         encryptFrom(plain, dest)
         return dest
     }
@@ -161,7 +169,7 @@ class VaultRepository(private val ctx: Context) {
                 val input = ctx.contentResolver.openInputStream(uri)
                 if (input == null) { skipped++; return@forEachIndexed }
                 input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
-                val dest = store(tmp, folder, name); n++
+                val dest = store(tmp, folder, name, cover.ifEmpty { null }); n++
                 // Pindah, bukan salin: hapus file asli hanya jika hasil enkripsi benar-benar ada dan tidak kosong.
                 if (deleteOriginals && dest.isFile && dest.length() >= tmp.length() && dest.length() > 0) {
                     if (deleteOriginal(uri)) deleted++ else undeleted += uri
@@ -177,19 +185,23 @@ class VaultRepository(private val ctx: Context) {
         if (!to.isDirectory || to == f.file.parentFile) return false
         val plain = runCatching { open(f) }.getOrNull() ?: return false
         return try {
-            val dest = runCatching { store(plain, to, f.name) }.getOrNull() ?: return false
+            val dest = runCatching { store(plain, to, f.name, coverOf(f)) }.getOrNull() ?: return false
             if (!f.file.delete()) { dest.delete(); return false }
             thumbFile(f.file).delete()
+            setCoverEntry(f.file, null)
+            noneMarker(f.file).delete()
             val favs = prefs.getStringSet("fav", emptySet())!!.toMutableSet()
             if (favs.remove(f.file.absolutePath)) { favs.add(dest.absolutePath); prefs.edit { putStringSet("fav", favs) } }
             thumbMem.remove(f.file.absolutePath)
+            setCoverEntry(f.file, entryName)
+            noneMarker(f.file).delete()
             true
         } finally { plain.delete() }
     }
     fun copy(f: VaultFile, destination: File = f.file.parentFile!!): Boolean {
         if (!destination.isDirectory || !destination.canonicalPath.startsWith(root.canonicalPath)) return false
         val plain = runCatching { open(f) }.getOrNull() ?: return false
-        return try { runCatching { store(plain, destination, f.name) }.isSuccess }
+        return try { runCatching { store(plain, destination, f.name, coverOf(f)) }.isSuccess }
         finally { plain.delete() }
     }
     private fun reencryptFile(source: File, destination: File): Boolean {
@@ -461,11 +473,13 @@ class VaultRepository(private val ctx: Context) {
 
         // Thumbnail lama yang hilang/rusak dibuat ulang dari file terenkripsi.
         // Ini juga memperbaiki CBZ/video yang sebelumnya hanya menampilkan ikon.
+        if (noneMarker(f.file).isFile) return null
         val plain = File(cache, "thumb_src_${System.nanoTime()}_${f.name}")
         var bitmap: Bitmap? = null
         try {
             decryptTo(f.file, plain)
-            bitmap = makeThumb(plain)
+            bitmap = makeThumb(plain, coverOf(f))
+            if (bitmap == null) runCatching { noneMarker(f.file).writeText("x") }
             if (bitmap != null) {
                 val encoded = File(cache, "thumb_out_${System.nanoTime()}.jpg")
                 val staged = File(tf.parentFile, ".${tf.name}.${System.nanoTime()}.new")
@@ -531,38 +545,124 @@ class VaultRepository(private val ctx: Context) {
             })
         }
     }
-    private fun makeThumb(plain: File): Bitmap? = when (VaultFile(plain).type) {
+    private fun makeThumb(plain: File, coverEntry: String? = null): Bitmap? = when (VaultFile(plain).type) {
         MediaType.PHOTO -> sampled { plain.inputStream() }?.let { applyExif(it, plain.path) }
-        MediaType.VIDEO -> MediaMetadataRetriever().run {
-            try {
-                setDataSource(plain.path)
-                // Beberapa video memiliki intro hitam. Coba beberapa timestamp dan pilih
-                // frame yang benar-benar berisi gambar, bukan thumbnail hitam.
-                val durationUs = runCatching { extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong()?.times(1_000L) }.getOrNull() ?: 0L
-                val candidates = listOf(1_000_000L, 3_000_000L, 5_000_000L, durationUs / 3, 0L)
-                    .filter { it >= 0L && (durationUs <= 0L || it < durationUs) }.distinct()
-                var chosen: Bitmap? = null
-                for (time in candidates) {
-                    val frame = runCatching { getFrameAtTime(time, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) }.getOrNull() ?: continue
-                    var total = 0L
-                    val stepX = (frame.width / 8).coerceAtLeast(1)
-                    val stepY = (frame.height / 8).coerceAtLeast(1)
-                    var samples = 0
-                    for (y in 0 until frame.height step stepY) for (x in 0 until frame.width step stepX) {
-                        val color = frame.getPixel(x, y)
-                        total += ((android.graphics.Color.red(color) + android.graphics.Color.green(color) + android.graphics.Color.blue(color)) / 3)
-                        samples++
-                    }
-                    val brightness = if (samples == 0) 0L else total / samples
-                    if (brightness > 12L) { chosen = frame; break } else frame.recycle()
-                }
-                chosen?.let { scaleDown(it) }
-            } finally { release() }
-        }
-        MediaType.COMIC -> ZipFile(plain).use { z ->
-            val e = z.entries().asSequence().filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp") }.minByOrNull { it.name.lowercase() }
-            e?.let { sampled { z.getInputStream(it) } } }
+        MediaType.VIDEO -> videoThumb(plain.path)
+        MediaType.COMIC -> ZipFile(plain).use { z -> comicThumb(z, coverEntry) }
         null -> null
+    }
+
+    /** Pilih frame video yang paling "hidup": coba banyak titik waktu, utamakan terang & kontras. */
+    private fun videoThumb(path: String): Bitmap? {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(path)
+            val durationUs = (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1_000L
+            val fractions = listOf(0.10, 0.25, 0.40, 0.55, 0.70, 0.85, 0.02)
+            val times = (if (durationUs > 0L) fractions.map { (durationUs * it).toLong() } else listOf(1_000_000L, 3_000_000L, 0L)).distinct()
+            var best: Bitmap? = null
+            var bestScore = -1f
+            for (t in times) {
+                val frame = frameAt(r, t) ?: continue
+                val (mean, sd) = lumaStats(frame)
+                if (mean >= 20f && sd >= 10f) {
+                    best?.recycle()
+                    return scaleDown(frame)
+                }
+                val score = mean + sd * 2f
+                if (score > bestScore) { best?.recycle(); best = frame; bestScore = score } else frame.recycle()
+            }
+            best?.let { scaleDown(it) }
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { r.release() }
+        }
+    }
+
+    private fun frameAt(r: MediaMetadataRetriever, timeUs: Long): Bitmap? {
+        val sync = runCatching {
+            if (Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 512, 512)
+            else r.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        }.getOrNull()
+        if (sync != null) return sync
+        return runCatching { r.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST) }.getOrNull()
+    }
+
+    /** Sampul CBZ: pilihan pengguna dulu; jika tidak ada, kandidat otomatis pertama yang bukan halaman kosong. */
+    private fun comicThumb(z: ZipFile, coverEntry: String?): Bitmap? {
+        if (coverEntry != null) {
+            val chosen = z.getEntry(coverEntry)?.let { e -> sampled { z.getInputStream(e) } }
+            if (chosen != null) return chosen
+        }
+        var fallback: Bitmap? = null
+        for (name in ComicPages.coverCandidates(ComicPages.pages(z))) {
+            val entry = z.getEntry(name) ?: continue
+            val bmp = sampled { z.getInputStream(entry) } ?: continue
+            if (bmp.width >= 120 && bmp.height >= 120 && !looksBlank(bmp)) {
+                fallback?.recycle()
+                return bmp
+            }
+            if (fallback == null) fallback = bmp else bmp.recycle()
+        }
+        return fallback
+    }
+
+    /** Rata-rata & sebaran kecerahan dari grid 12×12 piksel. */
+    private fun lumaStats(b: Bitmap): Pair<Float, Float> {
+        val stepX = (b.width / 12).coerceAtLeast(1)
+        val stepY = (b.height / 12).coerceAtLeast(1)
+        var n = 0
+        var sum = 0.0
+        var sumSq = 0.0
+        var y = 0
+        while (y < b.height) {
+            var x = 0
+            while (x < b.width) {
+                val c = b.getPixel(x, y)
+                val l = android.graphics.Color.red(c) * 0.299 + android.graphics.Color.green(c) * 0.587 + android.graphics.Color.blue(c) * 0.114
+                sum += l
+                sumSq += l * l
+                n++
+                x += stepX
+            }
+            y += stepY
+        }
+        if (n == 0) return 0f to 0f
+        val mean = sum / n
+        val variance = (sumSq / n - mean * mean).coerceAtLeast(0.0)
+        return mean.toFloat() to Math.sqrt(variance).toFloat()
+    }
+
+    private fun looksBlank(b: Bitmap): Boolean = lumaStats(b).second < 6f
+
+    /** Hapus thumbnail video/komik agar dibuat ulang otomatis saat terlihat. */
+    fun rebuildThumbnails(video: Boolean, comic: Boolean, onlyDark: Boolean): Int {
+        var removed = 0
+        (rootFiles() + folders().flatMap { files(it) }).forEach { vf ->
+            val wanted = (video && vf.type == MediaType.VIDEO) || (comic && vf.type == MediaType.COMIC && coverOf(vf) == null)
+            if (!wanted) return@forEach
+            noneMarker(vf.file).delete()
+            val tf = thumbFile(vf.file)
+            if (!tf.isFile) return@forEach
+            val dark = !onlyDark || runCatching {
+                decodeThumb(enc(tf).openFileInput().use { it.readBytes() })?.let { b ->
+                    val (mean, sd) = lumaStats(b)
+                    b.recycle()
+                    mean < 14f && sd < 10f
+                }
+            }.getOrNull() == true
+            if (dark && tf.delete()) removed++
+        }
+        thumbMem.evictAll()
+        return removed
+    }
+
+    /** Sekali per skema: perbaiki thumbnail video yang hampir hitam (otomatis, di latar belakang). */
+    fun migrateThumbnails() {
+        if (prefs.getInt("thumb_schema", 0) >= 2) return
+        rebuildThumbnails(video = true, comic = false, onlyDark = true)
+        prefs.edit { putInt("thumb_schema", 2) }
     }
 
     /* ---- favorit ---- */
@@ -590,7 +690,7 @@ class VaultRepository(private val ctx: Context) {
         val favs = prefs.getStringSet("fav", emptySet())!!
         val writer = BackupCrypto.Writer(out, password)
         val data = DataOutputStream(writer)
-        data.writeUTF("DHIKA-BACKUP"); data.writeInt(1); data.writeLong(System.currentTimeMillis())
+        data.writeUTF("DHIKA-BACKUP"); data.writeInt(2); data.writeLong(System.currentTimeMillis())
         data.writeInt(folderList.size); folderList.forEach { data.writeUTF(it.name) }
         data.writeInt(all.size)
         var doneBytes = 0L
@@ -602,6 +702,7 @@ class VaultRepository(private val ctx: Context) {
             data.writeUTF(vf.name)
             data.writeBoolean(vf.file.absolutePath in favs)
             data.writeLong(vf.file.lastModified())
+            data.writeUTF(coverOf(vf) ?: "")
             enc(vf.file).openFileInput().use { input ->
                 while (true) {
                     val r = input.read(buf)
@@ -623,7 +724,7 @@ class VaultRepository(private val ctx: Context) {
     fun restoreFrom(input: InputStream, password: CharArray, report: (Float, String) -> Unit, check: () -> Unit): RestoreResult {
         val data = DataInputStream(BackupCrypto.Reader(input, password))
         if (data.readUTF() != "DHIKA-BACKUP") throw IOException("Bukan file backup Dhika App")
-        if (data.readInt() != 1) throw IOException("Versi backup tidak didukung. Perbarui aplikasi.")
+        val version = data.readInt(); if (version !in 1..2) throw IOException("Versi backup tidak didukung. Perbarui aplikasi.")
         data.readLong()
         repeat(data.readInt().coerceIn(0, 100_000)) { safeFolderName(data.readUTF())?.let { File(root, it).mkdirs() } }
         val total = data.readInt().coerceAtLeast(0)
@@ -634,6 +735,7 @@ class VaultRepository(private val ctx: Context) {
             check()
             val folderName = data.readUTF(); val name = data.readUTF()
             val fav = data.readBoolean(); val modified = data.readLong()
+            val cover = if (version >= 2) data.readUTF() else ""
             report(i.toFloat() / total.coerceAtLeast(1), "${i + 1} / $total • $name")
             // Nama dari file backup tidak dipercaya: cegah path traversal dan jenis file tak dikenal.
             val folder: File? = if (folderName.isEmpty()) root else safeFolderName(folderName)?.let { File(root, it) }

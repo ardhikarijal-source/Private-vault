@@ -107,6 +107,10 @@ class MainActivity : FragmentActivity() {
                 var favScrollIndex by remember { mutableIntStateOf(0) }
                 var favScrollOffset by remember { mutableIntStateOf(0) }
                 val changed: () -> Unit = { version++; Unit }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { repo.migrateThumbnails() } }
+                    changed()
+                }
                 // Kunci otomatis saat aplikasi ditutup / ke background
                 var stopAt by remember { mutableLongStateOf(0L) }
                 val owner = LocalLifecycleOwner.current
