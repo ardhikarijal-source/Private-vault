@@ -72,7 +72,7 @@ import java.util.zip.ZipFile
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: Int, onBack: () -> Unit, onChanged: () -> Unit) {
+fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: Int, onBack: () -> Unit, onChanged: () -> Unit, onPageChanged: (VaultFile) -> Unit = {}) {
     val safeFiles = remember(files) { files.ifEmpty { emptyList() } }
     if (safeFiles.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = initialIndex.coerceIn(safeFiles.indices)) { safeFiles.size }
@@ -81,6 +81,7 @@ fun ViewerScreen(repo: VaultRepository, files: List<VaultFile>, initialIndex: In
     var infoVisible by remember { mutableStateOf(false) }
     var favorite by remember(safeFiles[pager.currentPage].file.absolutePath) { mutableStateOf(repo.isFav(safeFiles[pager.currentPage])) }
     val current = safeFiles[pager.currentPage]
+    LaunchedEffect(pager.currentPage) { onPageChanged(safeFiles[pager.currentPage.coerceIn(0, safeFiles.lastIndex)]) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val view = LocalView.current

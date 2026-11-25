@@ -412,73 +412,10 @@ private fun FolderInfoDialog(folder: File, onDismiss: () -> Unit) {
 
 
 
-/** Posisi daftar hasil pencarian tetap tersimpan saat membuka file lalu kembali. */
-private object SearchScrollMemory {
-    private val positions = mutableMapOf<String, Pair<Int, Int>>()
-    fun get(query: String): Pair<Int, Int> = positions[query] ?: (0 to 0)
-    fun set(query: String, index: Int, offset: Int) { positions[query] = index.coerceAtLeast(0) to offset.coerceAtLeast(0) }
-}
-
-/* ---------- SEARCH RESULTS ---------- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SearchScreen(
-    query: String,
-    results: List<VaultFile>,
-    repo: VaultRepository,
-    onBack: () -> Unit,
-    onFile: (VaultFile, List<VaultFile>) -> Unit
-) {
-    // Pulihkan posisi terakhir untuk query ini ketika kembali dari viewer.
-    val savedPosition = SearchScrollMemory.get(query)
-    val state = rememberLazyGridState(
-        initialFirstVisibleItemIndex = savedPosition.first,
-        initialFirstVisibleItemScrollOffset = savedPosition.second
-    )
-    LaunchedEffect(state, query) {
-        androidx.compose.runtime.snapshotFlow {
-            state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset
-        }.collect { (index, offset) ->
-            SearchScrollMemory.set(query, index, offset)
-        }
-    }
-    var selection by remember(query) { mutableStateOf<VaultFile?>(null) }
-    Scaffold(containerColor = Bg, topBar = {
-        TopAppBar(
-            title = { Column { Text("Hasil pencarian"); Text("\"$query\" · ${results.size} file", color = Muted, fontSize = 11.sp) } },
-            navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)
-        )
-    }) { pad ->
-        if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(pad), Alignment.Center) {
-            Text("Tidak ada file yang cocok dengan \"$query\".", color = Muted)
-        } else Box(Modifier.fillMaxSize().padding(pad)) {
-            LazyVerticalGrid(
-                state = state,
-                columns = GridCells.Adaptive(minSize = 104.dp),
-                contentPadding = PaddingValues(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(results, key = { it.file.absolutePath }) { file ->
-                    Thumb(repo, file, onLongClick = { selection = file }) {
-                        if (selection != null) selection = if (selection == file) null else file
-                        else {
-                            // Simpan langsung sebelum SearchScreen dilepas oleh navigasi.
-                            SearchScrollMemory.set(query, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset)
-                            onFile(file, results)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /* ---------- HOME ---------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true, onSearch: (String, List<VaultFile>) -> Unit = { _, _ -> }) {
+fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, onFile: (VaultFile, List<VaultFile>) -> Unit, onFav: () -> Unit, onSettings: () -> Unit, onTrash: () -> Unit, onRootFiles: () -> Unit, onChanged: () -> Unit, showBottomNav: Boolean = true, onOpenSearch: () -> Unit = {}) {
     // Baca daftar file di thread IO (bukan di main thread); data lama tetap tampil selama memuat ulang.
     val home by produceState<HomeData?>(null, version) {
         value = withContext(Dispatchers.IO) {
@@ -492,9 +429,8 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
     val all = home?.media ?: emptyList()
     val folders = home?.folders ?: emptyList()
     val typeCounts = remember(all) { all.groupingBy { it.type }.eachCount() }
-    var q by remember { mutableStateOf("") }
     val cols = (LocalConfiguration.current.screenWidthDp / 92).coerceIn(4, 10) // lebih banyak kolom saat landscape
-    val shown = remember(all, q, cols) { all.filter { it.name.contains(q, true) }.take(if (q.isBlank()) cols * 4 else 80).chunked(cols) }
+    val shown = remember(all, cols) { all.take(cols * 4).chunked(cols) }
     var chooseDest by remember { mutableStateOf(false) }
     var newDialog by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
@@ -588,15 +524,18 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
                     }
                 }
             }
-            item { OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Cari file…") }, leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (q.isNotBlank()) IconButton({ onSearch(q.trim(), all.filter { file -> file.name.contains(q.trim(), true) }) }) { Icon(Icons.Default.ArrowForward, "Cari file") }
-                    else Icon(Icons.Default.Search, null, tint = Muted)
-                },
-                singleLine = true, shape = RoundedCornerShape(18.dp),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { if (q.isNotBlank()) onSearch(q.trim(), all.filter { file -> file.name.contains(q.trim(), true) }) }),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, unfocusedBorderColor = Line, focusedContainerColor = Card, unfocusedContainerColor = Card)) }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card)
+                        .border(1.dp, Line, RoundedCornerShape(18.dp)).clickable { onOpenSearch() }
+                        .padding(horizontal = 16.dp, vertical = 15.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Search, null, tint = Muted)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Cari file atau folder…", color = Muted, modifier = Modifier.weight(1f))
+                }
+            }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -641,13 +580,11 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             }
             if (home != null && shown.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(if (q.isBlank()) "Brankas masih kosong.\nTekan + untuk menambah foto, video, atau komik." else "Tidak ada file yang cocok dengan “$q”.",
+                    Text("Brankas masih kosong.\nTekan + untuk menambah foto, video, atau komik.",
                         color = Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    if (q.isBlank()) {
-                        Spacer(Modifier.height(14.dp))
-                        OutlinedButton(onClick = backup.startRestore, shape = RoundedCornerShape(14.dp)) {
-                            Icon(Icons.Default.Restore, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pulihkan dari backup")
-                        }
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedButton(onClick = backup.startRestore, shape = RoundedCornerShape(14.dp)) {
+                        Icon(Icons.Default.Restore, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pulihkan dari backup")
                     }
                 }
             }

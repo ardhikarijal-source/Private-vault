@@ -35,7 +35,7 @@ import java.io.File
 sealed interface Screen {
     data object Home : Screen; data object Settings : Screen; data object Fav : Screen; data object Trash : Screen; data object RootFiles : Screen
     data class Folder(val dir: File) : Screen
-    data class Search(val query: String, val results: List<VaultFile>, val back: Screen) : Screen
+    data object Search : Screen
     data class View(val files: List<VaultFile>, val index: Int, val back: Screen) : Screen
 }
 
@@ -107,6 +107,7 @@ class MainActivity : FragmentActivity() {
                 var favScrollIndex by remember { mutableIntStateOf(0) }
                 var favScrollOffset by remember { mutableIntStateOf(0) }
                 val changed: () -> Unit = { version++; Unit }
+                val searchState = remember { SearchState() }
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { repo.migrateThumbnails() } }
                     changed()
@@ -121,14 +122,19 @@ class MainActivity : FragmentActivity() {
                             // Kembali dari pemilih file bukan alasan untuk mengunci (jika tidak, impor ikut batal).
                             val external = ExternalFlow.active; ExternalFlow.active = false
                             if (!external && stopAt > 0 && System.currentTimeMillis() - stopAt >= pm.autoLockMs) {
-                                locked = true; screen = Screen.Home; repo.clearCache(); CbzCache.clear()
+                                locked = true; screen = Screen.Home; searchState.reset(); repo.clearCache(); CbzCache.clear()
                             }
                             stopAt = 0L
                         }
                     }
                     owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
                 }
-                androidx.activity.compose.BackHandler(enabled = !locked && screen != Screen.Home) { screen = when (val current = screen) { is Screen.View -> current.back; else -> Screen.Home } }
+                androidx.activity.compose.BackHandler(enabled = !locked && screen != Screen.Home) {
+                    screen = when (val current = screen) {
+                        is Screen.View -> current.back
+                        else -> { if (current == Screen.Search) searchState.reset(); Screen.Home }
+                    }
+                }
                 var clipboard by remember { mutableStateOf<List<VaultFile>>(emptyList()) }
                 if (locked) {
                     LockScreen(pm) { locked = false }
@@ -157,7 +163,7 @@ class MainActivity : FragmentActivity() {
                                     { file, files -> screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Home) },
                                     { screen = Screen.Fav }, { screen = Screen.Settings }, { screen = Screen.Trash }, { screen = Screen.RootFiles }, changed,
                                     showBottomNav = false,
-                                    onSearch = { query, results -> if (results.isNotEmpty()) screen = Screen.Search(query, results, Screen.Home) else Toast.makeText(this@MainActivity, "Tidak ada file yang cocok.", Toast.LENGTH_SHORT).show() })
+                                    onOpenSearch = { searchState.reset(); screen = Screen.Search })
                                 Screen.Settings -> SettingsScreen(pm, repo, changed, { screen = Screen.Home }, checkUpdatesManually, checkingUpdates)
                                 Screen.Trash -> TrashScreen(repo, { screen = Screen.Home }, changed)
                                 Screen.RootFiles -> FolderScreen(repo, null, version, { screen = Screen.Home },
@@ -182,10 +188,11 @@ class MainActivity : FragmentActivity() {
                                         screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), s)
                                     }, changed, folderScrollIndex, folderScrollOffset,
                                     clipboard = clipboard, onClipboardChange = { clipboard = it }, showBottomNav = false)
-                                is Screen.Search -> SearchScreen(s.query, s.results, repo, { screen = s.back }) { file, files ->
-                                    screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), s)
+                                Screen.Search -> SearchScreen(searchState, repo, version, { searchState.reset(); screen = Screen.Home }, changed) { file, files ->
+                                    screen = Screen.View(files, files.indexOfFirst { it.file == file.file }.coerceAtLeast(0), Screen.Search)
                                 }
-                                is Screen.View -> ViewerScreen(repo, s.files, s.index, { screen = s.back }, changed)
+                                is Screen.View -> ViewerScreen(repo, s.files, s.index, { screen = s.back }, changed,
+                                    onPageChanged = { if (s.back == Screen.Search) searchState.lastViewedPath = it.file.absolutePath })
                             }
                         }
                     }
