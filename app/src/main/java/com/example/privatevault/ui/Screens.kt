@@ -61,14 +61,25 @@ import java.util.zip.ZipFile
 @Composable
 fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
     val ctx = LocalContext.current
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var pin by remember { mutableStateOf("") }
     var first by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
+    var shakeTick by remember { mutableIntStateOf(0) }
+    val shake = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(shakeTick) {
+        if (shakeTick > 0) {
+            repeat(3) {
+                shake.animateTo(16f, androidx.compose.animation.core.tween(40))
+                shake.animateTo(-16f, androidx.compose.animation.core.tween(40))
+            }
+            shake.animateTo(0f, androidx.compose.animation.core.tween(40))
+        }
+    }
     val scope = rememberCoroutineScope()
     val setup = !pm.hasPin
     val canBio = remember { androidx.biometric.BiometricManager.from(ctx).canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS }
+    val showBio = !setup && pm.biometric && canBio
     val title = when { !setup -> "Masukkan PIN"; first == null -> "Buat PIN baru (4 digit)"; else -> "Ulangi PIN" }
 
     fun bio() {
@@ -93,7 +104,7 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
                         val (valid, wait) = withContext(Dispatchers.IO) { val ok = pm.verify(entered); ok to pm.lockRemainingMs() }
                         checking = false
                         if (valid) onUnlocked() else {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            vibrateError(ctx); shakeTick++
                             error = if (wait > 0) "Terlalu banyak percobaan. Coba lagi dalam ${(wait + 999) / 1000} detik" else "PIN salah, coba lagi"
                             pin = ""
                         }
@@ -108,36 +119,70 @@ fun LockScreen(pm: PinManager, onUnlocked: () -> Unit) {
                         onUnlocked()
                     }
                 }
-                else -> { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); error = "PIN tidak sama"; first = null; pin = "" }
+                else -> { vibrateError(ctx); shakeTick++; error = "PIN tidak sama"; first = null; pin = "" }
             }
         }
     }
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF152C50), Color(0xFF0D192D), Bg)))) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Box(Modifier.size(104.dp).clip(RoundedCornerShape(30.dp)).background(Color(0x332F7BFF)).border(1.dp, Color(0x665F9BFF), RoundedCornerShape(30.dp)), contentAlignment = Alignment.Center) {
-            Image(painterResource(R.drawable.logo_full_white), "Logo Dhika", Modifier.fillMaxWidth(0.82f))
-        }
-        Spacer(Modifier.height(12.dp))
-        Text("DHIKA APP", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 2.sp)
-        Spacer(Modifier.height(6.dp))
-        Text(title, color = Muted)
-        Row(Modifier.padding(vertical = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            repeat(4) { Box(Modifier.size(14.dp).clip(CircleShape).border(2.dp, Accent, CircleShape).background(if (it < pin.length) Accent else androidx.compose.ui.graphics.Color.Transparent)) }
-        }
-        Text(error, color = androidx.compose.ui.graphics.Color(0xFFFF6B73), fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.heightIn(min = 36.dp))
-        listOf("123", "456", "789", " 0⌫").forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 14.dp)) {
-                row.forEach { ch ->
-                    when (ch) {
-                        ' ' -> Spacer(Modifier.size(72.dp))
-                        '⌫' -> PinKey(onClick = { press("⌫") }) { Icon(Icons.Default.Backspace, "Hapus digit") }
-                        else -> PinKey(onClick = { press(ch.toString()) }) { Text(ch.toString(), fontSize = 24.sp) }
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF16305C), Color(0xFF0C1830), Color(0xFF070D1A))))) {
+        Box(Modifier.size(360.dp).align(Alignment.TopStart).offset(x = (-120).dp, y = (-100).dp)
+            .background(Brush.radialGradient(listOf(Color(0x552F7BFF), Color.Transparent)), CircleShape))
+        Box(Modifier.size(300.dp).align(Alignment.BottomEnd).offset(x = 110.dp, y = 90.dp)
+            .background(Brush.radialGradient(listOf(Color(0x3329B6FF), Color.Transparent)), CircleShape))
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 28.dp)) {
+                Image(painterResource(R.drawable.logo_full_white), "ARDHIKA", Modifier.width(220.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("DHIKA APP", fontSize = 13.sp, letterSpacing = 4.sp, fontWeight = FontWeight.Medium, color = Color(0xFF9DB6E8))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    Modifier.offset { androidx.compose.ui.unit.IntOffset(shake.value.toInt(), 0) },
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    repeat(4) { i ->
+                        val ringColor = if (error.isNotEmpty()) Color(0xFFFF6B73) else Accent
+                        Box(Modifier.size(16.dp).clip(CircleShape)
+                            .background(if (i < pin.length) Accent else Color.Transparent)
+                            .border(2.dp, ringColor, CircleShape))
+                    }
+                }
+                Text(error, color = Color(0xFFFF8A91), fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp).heightIn(min = 36.dp))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 12.dp)) {
+                listOf("123", "456", "789", " 0⌫").forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.padding(top = 14.dp)) {
+                        row.forEach { ch ->
+                            when (ch) {
+                                ' ' -> if (showBio) PinKey(onClick = ::bio) { Icon(Icons.Default.Fingerprint, "Biometrik", Modifier.size(30.dp), tint = Color.White) }
+                                       else Spacer(Modifier.size(76.dp))
+                                '⌫' -> PinKey(onClick = { press("⌫") }) { Icon(Icons.Default.Backspace, "Hapus digit", Modifier.size(26.dp), tint = Color.White) }
+                                else -> PinKey(onClick = { press(ch.toString()) }) { Text(ch.toString(), fontSize = 28.sp, fontWeight = FontWeight.Light, color = Color.White) }
+                            }
+                        }
                     }
                 }
             }
         }
-        if (!setup && pm.biometric && canBio) TextButton(onClick = ::bio) { Icon(Icons.Default.Fingerprint, null); Text(" Gunakan biometrik") }
     }
+}
+
+
+@Suppress("DEPRECATION")
+private fun vibrateError(ctx: android.content.Context) {
+    runCatching {
+        val vibrator: android.os.Vibrator? = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            (ctx.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager).defaultVibrator
+        } else {
+            ctx.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+        }
+        vibrator?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 70, 60, 70, 60, 150), -1))
     }
 }
 
@@ -180,8 +225,9 @@ private fun Modifier.bouncyClick(onClick: () -> Unit, onLongClick: (() -> Unit)?
 private fun PinKey(onClick: () -> Unit, content: @Composable () -> Unit) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(
-        Modifier.size(72.dp).clip(CircleShape).background(Color(0xFF243B63))
-            .border(1.dp, Color(0x665F9BFF), CircleShape)
+        Modifier.size(76.dp).clip(CircleShape)
+            .background(Brush.verticalGradient(listOf(Color(0x40FFFFFF), Color(0x14FFFFFF))))
+            .border(1.dp, Brush.linearGradient(listOf(Color(0x99FFFFFF), Color(0x1AFFFFFF))), CircleShape)
             .bouncyClick(onClick = {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 onClick()
