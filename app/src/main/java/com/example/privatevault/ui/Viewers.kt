@@ -69,7 +69,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.zip.ZipFile
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -640,7 +643,8 @@ fun CbzReader(
         onDispose {
             if (ready != null) {
                 CbzCache.evictPrefix(ready.dir.absolutePath)
-                ready.dir.deleteRecursively()
+                // Hapus berkas sementara di thread terpisah agar UI tidak tersendat.
+                Thread { ready.dir.deleteRecursively() }.start()
             }
         }
     }
@@ -968,6 +972,23 @@ private suspend fun loadCbzBitmap(page: CbzPageInfo, key: String): Bitmap? {
     }
 }
 
+/**
+ * Ekstrak satu halaman CBZ ke berkas lokal dan baca ukurannya.
+ * Fungsi biasa (bukan suspend): dipanggil di dalam async + withPermit pada prepareCbzBook.
+ */
+private fun extractCbzPage(zip: ZipFile, dir: File, index: Int, name: String): CbzPageInfo? {
+    val entry = zip.getEntry(name) ?: return null
+    val ext = name.substringAfterLast('.', "bin").lowercase()
+        .filter { it.isLetterOrDigit() }.take(5).ifEmpty { "bin" }
+    val output = File(dir, String.format(java.util.Locale.US, "%05d.%s", index, ext))
+    zip.getInputStream(entry).use { input ->
+        output.outputStream().use { stream -> input.copyTo(stream, 128 * 1024) }
+    }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(output.absolutePath, bounds)
+    return CbzPageInfo(name, output, bounds.outWidth, bounds.outHeight, ext == "gif" || ext == "webp")
+}
+
 private suspend fun prepareCbzBook(
     ctx: Context,
     source: File,
@@ -980,31 +1001,21 @@ private suspend fun prepareCbzBook(
     val dir = File(root, "b" + System.nanoTime()).apply { mkdirs() }
     try {
         val completed = java.util.concurrent.atomic.AtomicInteger(0)
-        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-        val pages = ZipFile(source).use { zip ->
-            kotlinx.coroutines.coroutineScope {
-                names.mapIndexed { index, name ->
-                    kotlinx.coroutines.async {
-                        semaphore.withPermit {
-                            val entry = zip.getEntry(name)
-                            if (entry == null) {
-                                onProgress(completed.incrementAndGet())
-                                return@withPermit null
-                            }
-                            val ext = name.substringAfterLast('.', "bin").lowercase()
-                                .filter { it.isLetterOrDigit() }.take(5).ifEmpty { "bin" }
-                            val output = File(dir, String.format(java.util.Locale.US, "%05d.%s", index, ext))
-                            zip.getInputStream(entry).use { input ->
-                                output.outputStream().use { stream -> input.copyTo(stream, 128 * 1024) }
-                            }
-                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            BitmapFactory.decodeFile(output.absolutePath, bounds)
-                            onProgress(completed.incrementAndGet())
-                            CbzPageInfo(name, output, bounds.outWidth, bounds.outHeight, ext == "gif" || ext == "webp")
-                        }
+        val semaphore = Semaphore(3)
+        val zip = ZipFile(source)
+        val pages: List<CbzPageInfo> = try {
+            coroutineScope {
+                val jobs = names.mapIndexed { index, name ->
+                    async {
+                        val page: CbzPageInfo? = semaphore.withPermit { extractCbzPage(zip, dir, index, name) }
+                        onProgress(completed.incrementAndGet())
+                        page
                     }
-                }.awaitAll().filterNotNull()
+                }
+                jobs.awaitAll().filterNotNull()
             }
+        } finally {
+            zip.close()
         }
         pages.filter { !it.animated }.take(3).forEach { loadCbzBitmap(it, it.file.absolutePath) }
         CbzBook(dir, pages)
