@@ -68,6 +68,8 @@ class VaultRepository(private val ctx: Context) {
     fun setCoverEntry(file: File, entry: String?) {
         prefs.edit { if (entry == null) remove(coverKey(file)) else putString(coverKey(file), entry) }
     }
+    fun sortSpecFor(key: String): String? = prefs.getString("sort:$key", null)
+    fun saveSortSpec(key: String, encoded: String) { prefs.edit { putString("sort:$key", encoded) } }
 
     /** Jika aktif, file asli di perangkat dihapus setelah berhasil diamankan ke brankas (benar-benar "pindah", bukan salin). */
     var moveOriginals: Boolean

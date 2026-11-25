@@ -149,13 +149,6 @@ private object TabMemory {
     fun set(key: String, type: MediaType?) { map[key] = type }
 }
 
-/** Simpan pilihan pengurutan per folder/tab meski pengguna membuka viewer lalu kembali. */
-private object SortMemory {
-    private val map = mutableMapOf<String, String>()
-    fun get(key: String): String = map[key] ?: "Terbaru"
-    fun set(key: String, mode: String) { map[key] = mode }
-}
-
 /** Posisi scroll tiap folder/tab dipertahankan saat pengguna berpindah menu. */
 private object GridScrollMemory {
     private val positions = mutableMapOf<String, Pair<Int, Int>>()
@@ -721,20 +714,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
     val sel = remember { mutableStateListOf<VaultFile>() }
     androidx.activity.compose.BackHandler(enabled = sel.isNotEmpty()) { sel.clear() }
     var menu by remember { mutableStateOf(false) }; var rename by remember { mutableStateOf(false) }; var moveDlg by remember { mutableStateOf(false) }
-    var sortMenu by remember { mutableStateOf(false) }
+    var sortSheet by remember { mutableStateOf(false) }
     var selMenu by remember { mutableStateOf(false) }
-    var sortMode by remember(tabKey) { mutableStateOf(SortMemory.get(tabKey)) }
+    var sortSpec by remember(tabKey) { mutableStateOf(SortSpec.decode(repo.sortSpecFor(tabKey))) }
     // Menu "Gambar" kini menampilkan semua jenis media (foto, video, komik) lewat tab, bukan hanya foto.
     val source = remember(version, rootFiles, folder) { if (rootFiles) repo.rootFiles() else if (folder == null) repo.favorites() else repo.files(folder) }
     val tabCounts = remember(source) { source.groupingBy { it.type }.eachCount() + (null to source.size) }
-    val items = remember(source, tab, sortMode) {
+    val items = remember(source, tab, sortSpec) {
         val filtered = if (tab == null) source else source.filter { it.type == tab }
-        when (sortMode) {
-            "Jenis file" -> filtered.sortedWith(compareBy<VaultFile> { fileTypeSortRank(it) }
-                .thenBy { it.file.extension.lowercase() }.thenBy { it.name.lowercase() })
-            "Nama file" -> filtered.sortedBy { it.name.lowercase() }
-            else -> filtered.sortedByDescending { it.file.lastModified() }
-        }
+        sortFiles(filtered, sortSpec) { fileTypeSortRank(it) }
     }
     // Bila tab aktif kosong tetapi tab lain berisi, pindah otomatis supaya file yang baru diunggah langsung terlihat.
     LaunchedEffect(source) {
@@ -790,19 +778,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             navigationIcon = { if (sel.isNotEmpty()) IconButton({ sel.clear() }) { Icon(Icons.Default.Close, "Batal pilih") } else if (!rootFiles && folder != null) IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Kembali") } },
             actions = {
                 if (sel.isEmpty()) {
-                    Box {
-                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.Sort, "Urutkan") }
-                        DropdownMenu(sortMenu, { sortMenu = false }) {
-                            listOf("Terbaru", "Jenis file", "Nama file").forEach { mode ->
-                                DropdownMenuItem(text = { Text(if (sortMode == mode) "✓ $mode" else mode) }, onClick = {
-                                    sortMode = mode
-                                    SortMemory.set(tabKey, mode)
-                                    if (mode == "Jenis file") { tab = null; TabMemory.set(tabKey, null) }
-                                    sortMenu = false
-                                })
-                            }
-                        }
-                    }
+                    IconButton(onClick = { sortSheet = true }) { Icon(Icons.Default.Sort, "Urutkan") }
                     if (folder != null) Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Tindakan folder") }
                         DropdownMenu(menu, { menu = false }) {
@@ -864,6 +840,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
         }) { pad ->
         Column(Modifier.padding(pad)) {
             MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${items.size} file", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                AssistChip(
+                    onClick = { sortSheet = true },
+                    label = { Text(sortSpec.summary()) },
+                    leadingIcon = { Icon(Icons.Default.Sort, null, Modifier.size(16.dp)) },
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
             Box(Modifier.fillMaxSize()) {
                 LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 34.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -918,6 +903,15 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
 
     if (infoFolder && folder != null) FolderInfoDialog(folder) { infoFolder = false }
     if (deleteFolder && folder != null) AlertDialog(onDismissRequest = { deleteFolder = false }, title = { Text("Hapus folder?") }, text = { Text("Isi folder akan dipindahkan ke Sampah selama 30 hari.") }, confirmButton = { ConfirmButton("Ya, hapus", destructive = true) { deleteFolder = false; scope.launch { withContext(Dispatchers.IO) { repo.deleteFolder(folder) }; onChanged(); onBack() } } }, dismissButton = { CancelButton("Tidak") { deleteFolder = false } })
+    if (sortSheet) SortSheet(
+        current = sortSpec,
+        onChange = { new ->
+            sortSpec = new
+            repo.saveSortSpec(tabKey, new.encode())
+            if (new.field == SortField.TYPE) { tab = null; TabMemory.set(tabKey, null) }
+        },
+        onDismiss = { sortSheet = false }
+    )
 }
 
 /* ---------- PENGATURAN ---------- */
