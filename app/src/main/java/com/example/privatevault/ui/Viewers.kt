@@ -6,6 +6,8 @@ import android.view.View
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -530,6 +532,73 @@ fun VideoPlayer(
     }
 }
 
+/** Pratinjau kecil satu halaman CBZ untuk pemilih sampul. */
+private suspend fun loadCbzThumb(file: File, entryName: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+        ZipFile(file).use { z ->
+            val entry = z.getEntry(entryName) ?: return@use null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            z.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            val longest = maxOf(bounds.outWidth, bounds.outHeight)
+            while (longest / (sample * 2) >= 320) sample *= 2
+            z.getInputStream(entry).use {
+                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                })
+            }
+        }
+    }.getOrNull()
+}
+
+@Composable
+private fun CbzCoverPicker(file: File, names: List<String>, initial: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    var selected by remember { mutableStateOf(initial) }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+        initialFirstVisibleItemIndex = (names.indexOf(initial).coerceAtLeast(0) / 3) * 3
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pilih sampul komik") },
+        text = {
+            Column {
+                Text("Ketuk halaman yang ingin dijadikan sampul.", color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(10.dp))
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    state = gridState,
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxWidth().height(340.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(names.size, key = { names[it] }) { i ->
+                        val name = names[i]
+                        val bmp by produceState<Bitmap?>(null, name) { value = loadCbzThumb(file, name) }
+                        val picked = name == selected
+                        val shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                        Box(
+                            Modifier.aspectRatio(0.7f).clip(shape).background(Color(0xFF18243A))
+                                .border(if (picked) 3.dp else 1.dp, if (picked) Accent else Color(0xFF53627A), shape)
+                                .clickable { selected = name },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                                ?: CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("${i + 1}", color = Color.White, fontSize = 11.sp,
+                                modifier = Modifier.align(Alignment.BottomStart).padding(4.dp)
+                                    .background(Color(0x99000000), androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).padding(horizontal = 5.dp))
+                            if (picked) Icon(Icons.Default.CheckCircle, null, tint = Accent, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { ConfirmButton("Jadikan sampul") { onPick(selected) } },
+        dismissButton = { CancelButton("Batal") { onDismiss() } }
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CbzReader(
@@ -542,15 +611,7 @@ fun CbzReader(
 ) {
     var coverCandidate by remember(file) { mutableStateOf<String?>(null) }
     val names = remember(file) {
-        runCatching {
-            ZipFile(file).use { z ->
-                z.entries().asSequence()
-                    .filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp", "gif") }
-                    .map { it.name }
-                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
-                    .toList()
-            }
-        }.getOrElse { emptyList() }
+        runCatching { ZipFile(file).use { z -> ComicPages.pages(z) } }.getOrElse { emptyList() }
     }
     var verticalMode by remember(file) { mutableStateOf(false) }
     val pager = rememberPagerState { names.size }
@@ -675,27 +736,10 @@ fun CbzReader(
         } }
     }
     coverCandidate?.let { entry ->
-        AlertDialog(
-            onDismissRequest = { coverCandidate = null },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Jadikan sampul CBZ?", modifier = Modifier.weight(1f))
-                    IconButton(onClick = { coverCandidate = null }) {
-                        Icon(Icons.Default.Close, "Tutup")
-                    }
-                }
-            },
-            text = { Text("Gunakan halaman ini sebagai thumbnail komik?\n${entry.substringAfterLast('/')}") },
-            confirmButton = {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { coverCandidate = null }, modifier = Modifier.weight(1f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Tidak") }
-                    Button(onClick = { coverCandidate = null; onSetCover(entry) }, modifier = Modifier.weight(1f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) { Text("Ya, jadikan sampul") }
-                }
-            },
-            dismissButton = {}
-        )
+        CbzCoverPicker(file, names, entry, onPick = { chosen ->
+            coverCandidate = null
+            onSetCover(chosen)
+        }, onDismiss = { coverCandidate = null })
     }
 }
 

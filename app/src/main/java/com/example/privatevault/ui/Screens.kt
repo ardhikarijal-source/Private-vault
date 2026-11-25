@@ -291,7 +291,10 @@ private fun FolderCover(repo: VaultRepository, file: VaultFile) {
 
 @Composable
 fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, selected: Boolean? = null, onToggle: () -> Unit = {}, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
-    val bmp by produceState<android.graphics.Bitmap?>(null, f.file.absolutePath, repo.thumbRevision(f)) { value = withContext(Dispatchers.IO) { repo.thumb(f) } }
+    val result by produceState<Pair<Boolean, android.graphics.Bitmap?>>(false to null, f.file.absolutePath, repo.thumbRevision(f)) {
+        value = true to withContext(Dispatchers.IO) { repo.thumb(f) }
+    }
+    val bmp = result.second
     val image = remember(bmp) { bmp?.asImageBitmap() }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Item yang dipilih sedikit mengecil (efek pegas) supaya status pilihan terasa jelas.
@@ -300,7 +303,7 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
         .bouncyClick(onClick = onClick, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongClick() }),
         contentAlignment = Alignment.Center) {
         image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-        if (bmp == null && f.type == MediaType.COMIC) Icon(Icons.Default.MenuBook, null, tint = Accent, modifier = Modifier.size(36.dp))
+        if (result.first && bmp == null && f.type != MediaType.PHOTO) ThumbPlaceholder(f)
         if (f.type == MediaType.VIDEO) Box(Modifier.size(36.dp).clip(CircleShape).background(Color(0x77000000)), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(22.dp))
         }
@@ -310,6 +313,21 @@ fun Thumb(repo: VaultRepository, f: VaultFile, modifier: Modifier = Modifier, se
         if (selected != null) Box(Modifier.align(Alignment.TopStart).padding(6.dp).size(22.dp).clip(CircleShape)
             .background(if (selected) Accent else Color(0x66000000)).border(2.dp, Color.White, CircleShape).clickable(onClick = onToggle),
             contentAlignment = Alignment.Center) { if (selected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+    }
+}
+ 
+@Composable
+private fun ThumbPlaceholder(f: VaultFile) {
+    Box(
+        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF28457F), Color(0xFF16264A)))),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
+            Icon(if (f.type == MediaType.VIDEO) Icons.Default.Videocam else Icons.Default.MenuBook, null,
+                tint = Color(0xFFB8CBFF), modifier = Modifier.size(30.dp))
+            Text(f.name.substringBeforeLast('.'), color = Color(0xCCFFFFFF), fontSize = 10.sp, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
     }
 }
 
@@ -937,6 +955,8 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
     var auto by remember { mutableStateOf(pm.autoLockMs) }
     var pinDlg by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var confirmThumbs by remember { mutableStateOf(false) }
     val backup = rememberBackupUi(repo, onChanged)
     var moveOrig by remember { mutableStateOf(repo.moveOriginals) }
     Scaffold(containerColor = Bg, topBar = { TopAppBar(title = { Text("Pengaturan") }, navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)) }) { pad ->
@@ -967,6 +987,27 @@ fun SettingsScreen(pm: PinManager, repo: VaultRepository, onChanged: () -> Unit,
                 }
                 Switch(moveOrig, { moveOrig = it; repo.moveOriginals = it })
             }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { confirmThumbs = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Refresh, null, tint = Accent)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("Perbarui thumbnail")
+                    Text("Buat ulang thumbnail video & komik. Sampul CBZ yang kamu pilih sendiri tetap aman.", color = Muted, fontSize = 12.sp)
+                }
+            }
+            if (confirmThumbs) AlertDialog(
+                onDismissRequest = { confirmThumbs = false },
+                title = { Text("Perbarui thumbnail?") },
+                text = { Text("Thumbnail video dan komik akan dibuat ulang saat terlihat. Proses berjalan di latar belakang.") },
+                confirmButton = { ConfirmButton("Perbarui") {
+                    confirmThumbs = false
+                    scope.launch {
+                        val n = withContext(Dispatchers.IO) { repo.rebuildThumbnails(video = true, comic = true, onlyDark = false) }
+                        android.widget.Toast.makeText(ctx, "$n thumbnail akan dibuat ulang", android.widget.Toast.LENGTH_SHORT).show()
+                        onChanged()
+                    }
+                } },
+                dismissButton = { CancelButton("Batal") { confirmThumbs = false } }
+            )
             Text("Semua file & thumbnail dienkripsi AES-256 di penyimpanan privat aplikasi.", color = Muted, fontSize = 13.sp)
             Text("Cadangan", color = Muted, fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).clickable { backup.startBackup() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
