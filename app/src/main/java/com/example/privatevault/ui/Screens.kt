@@ -493,7 +493,7 @@ fun HomeScreen(repo: VaultRepository, version: Int, onFolder: (File) -> Unit, on
             containerColor = Color(0xFF0D1527)
         ) {
                 NavigationBarItem(true, {}, { Icon(Icons.Default.Home, null) }, label = { Text("Beranda") })
-                NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.FolderOpen, null) }, label = { Text("File") })
+                NavigationBarItem(false, onRootFiles, { Icon(Icons.Default.Folder, null) }, label = { Text("File") })
                 NavigationBarItem(false, onFav, { Icon(Icons.Default.FavoriteBorder, null) }, label = { Text("Favorit") })
                 NavigationBarItem(false, onSettings, { Icon(Icons.Default.Settings, null) }, label = { Text("Pengaturan") })
             }
