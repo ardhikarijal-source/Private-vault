@@ -866,7 +866,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
             MediaTabs(tab, tabCounts) { tab = it; TabMemory.set(tabKey, it); sel.clear() }
             if (items.isEmpty() && !importing) EmptyState(tab, if (folder == null && !rootFiles) "Tandai file dengan ikon hati supaya muncul di sini." else "Tekan Tambah untuk menyimpan file ke sini.")
             Box(Modifier.fillMaxSize()) {
-                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 18.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyVerticalGrid(state = gridState, columns = GridCells.Adaptive(minSize = 104.dp), contentPadding = PaddingValues(start = 10.dp, top = 4.dp, end = 34.dp, bottom = 88.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(items, key = { it.file.absolutePath }) { f ->
                         Thumb(repo, f,
                             selected = if (sel.isNotEmpty()) sel.contains(f) else null,
@@ -879,34 +879,7 @@ fun FolderScreen(repo: VaultRepository, folder: File?, version: Int, onBack: () 
                         }
                     }
                 }
-                if (items.size > 12) Canvas(
-                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
-                        .padding(top = 8.dp, bottom = 92.dp)
-                        .pointerInput(gridState, items.size) {
-                            detectDragGestures(
-                                onDragStart = { p ->
-                                    val fraction = (p.y / size.height).coerceIn(0f, 1f)
-                                    scope.launch { gridState.scrollToItem((fraction * (items.size - 1)).toInt().coerceIn(0, items.lastIndex)) }
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val fraction = (change.position.y / size.height).coerceIn(0f, 1f)
-                                    scope.launch { gridState.scrollToItem((fraction * (items.size - 1)).toInt().coerceIn(0, items.lastIndex)) }
-                                }
-                            )
-                        }
-                ) {
-                    val info = gridState.layoutInfo
-                    val total = info.totalItemsCount.coerceAtLeast(1)
-                    val visible = info.visibleItemsInfo.size.coerceAtLeast(1)
-                    val thumbHeight = (size.height * visible / total).coerceIn(28.dp.toPx(), size.height)
-                    val fraction = gridState.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)
-                    val y = (size.height - thumbHeight) * fraction.coerceIn(0f, 1f)
-                    drawRoundRect(Color(0x556F83A8), Offset(size.width / 2 - 2.dp.toPx(), 0f),
-                        androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
-                    drawRoundRect(Accent, Offset(size.width / 2 - 3.dp.toPx(), y),
-                        androidx.compose.ui.geometry.Size(6.dp.toPx(), thumbHeight), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
-                }
+                FastScrollbar(gridState, items.size, Modifier.align(Alignment.CenterEnd).padding(top = 8.dp, bottom = 92.dp))
             }
         }
     }
